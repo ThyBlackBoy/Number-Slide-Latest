@@ -62,7 +62,7 @@ function MessagesPage() {
       if (!people.has(otherId)) people.set(otherId, { id: otherId, username: 'Player' });
     });
 
-    const missing = [...people.values()].filter((p) => p.username === 'Player').map((p) => p.id);
+    const missing = Array.from(people.values()).filter((p) => p.username === 'Player').map((p) => p.id);
     if (missing.length) {
       const { data: names } = await supabase.from('profiles').select('id, username').in('id', missing);
       (names || []).forEach((n: any) => {
@@ -71,7 +71,7 @@ function MessagesPage() {
       });
     }
 
-    const list: Row[] = [...people.values()].map((other) => ({ other, last: lastBy.get(other.id) }));
+    const list: Row[] = Array.from(people.values()).map((other) => ({ other, last: lastBy.get(other.id) }));
     list.sort((a, b) => {
       const at = a.last ? new Date(a.last.created_at).getTime() : 0;
       const bt = b.last ? new Date(b.last.created_at).getTime() : 0;
