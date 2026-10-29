@@ -342,7 +342,7 @@ export default function GameBoard() {
         .eq('challenge_date', today)
         .order('score', { ascending: false })
         .limit(5);
-      const king = (kings || []).find((row) => row.user_id !== user.id);
+      const king: any = (kings || []).find((row: any) => row.user_id !== user.id);
       const { data: mineRow } = await supabase
         .from('daily_scores')
         .select('score')
@@ -387,7 +387,7 @@ export default function GameBoard() {
         .select('user_id, score, profiles(username)')
         .order('score', { ascending: false })
         .limit(5);
-      const king = (kings || []).find((row) => row.user_id !== user.id);
+      const king: any = (kings || []).find((row: any) => row.user_id !== user.id);
       await supabase.from('scores').insert({
         user_id: user.id,
         score,
