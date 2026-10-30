@@ -121,8 +121,12 @@ export default function FriendsPage() {
     }
   };
 
-  const acceptRequest = async (friendshipId: string, fromUserId: string) => {
-    await supabase.from('friends').update({ status: 'accepted' }).eq('id', friendshipId);
+    const acceptRequest = async (friendshipId: string, fromUserId: string) => {
+    const { error } = await supabase.from('friends').update({ status: 'accepted' }).eq('id', friendshipId);
+    if (error) {
+      setSearchMsg('Accept failed. Run the new Supabase rules, then try again.');
+      return;
+    }
     await createNotification(
       fromUserId,
       'friend_accepted',
