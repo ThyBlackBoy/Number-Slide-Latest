@@ -38,14 +38,14 @@ function MessagesPage() {
   const loadInbox = async (userId: string) => {
     const { data: links } = await supabase
       .from('friends')
-      .select('*, friend:friend_id(id, username), requester:user_id(id, username)')
+      .select('*')
       .or(`user_id.eq.${userId},friend_id.eq.${userId}`)
       .eq('status', 'accepted');
 
     const people = new Map<string, Person>();
     (links || []).forEach((f: any) => {
-      const other = f.user_id === userId ? f.friend : f.requester;
-      if (other?.id) people.set(other.id, { id: other.id, username: other.username || 'Player' });
+      const otherId = f.user_id === userId ? f.friend_id : f.user_id;
+      if (otherId) people.set(otherId, { id: otherId, username: 'Player' });
     });
 
     const { data: msgs } = await supabase
@@ -125,11 +125,15 @@ function MessagesPage() {
     if (!user || !open || !text.trim()) return;
     const content = text.trim();
     setText('');
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('messages')
       .insert({ sender_id: user.id, receiver_id: open.id, content })
       .select()
       .single();
+    if (error) {
+      setText(content);
+      return;
+    }
     if (data) {
       setMessages((prev) => [...prev, data]);
       await supabase.from('notifications').insert({
