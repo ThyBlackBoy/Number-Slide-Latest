@@ -125,6 +125,8 @@ export default function GameBoard() {
   const [openMatches, setOpenMatches] = useState<any[]>([]);
   const [timeLeft, setTimeLeft] = useState(60);
   const [pvpResult, setPvpResult] = useState<'win' | 'lose' | 'draw' | null>(null);
+  const [opponentScore, setOpponentScore] = useState<number>(0);
+  const [opponentName, setOpponentName] = useState<string>('Opponent');
   const [loadingLobby, setLoadingLobby] = useState(false);
   const [tool, setTool] = useState<Tool>(null);
   const [swapFirst, setSwapFirst] = useState<number | null>(null);
@@ -161,6 +163,39 @@ export default function GameBoard() {
   useEffect(() => {
     scoreRef.current = state.score;
   }, [state.score]);
+
+  // --------------------------------------------------------------------------
+  // SUPABASE REALTIME BROADCAST FOR PVP MATCHES
+  // --------------------------------------------------------------------------
+  useEffect(() => {
+    if (!isPvp || !match?.id || screen !== 'playing') return;
+
+    const channel = supabase.channel(`pvp_match_${match.id}`, {
+      config: { broadcast: { self: false } },
+    });
+
+    channel
+      .on('broadcast', { event: 'score' }, ({ payload }) => {
+        if (typeof payload.score === 'number') setOpponentScore(payload.score);
+        if (payload.username) setOpponentName(payload.username);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isPvp, match?.id, screen, supabase]);
+
+  useEffect(() => {
+    if (!isPvp || !match?.id || screen !== 'playing') return;
+
+    const channel = supabase.channel(`pvp_match_${match.id}`);
+    channel.send({
+      type: 'broadcast',
+      event: 'score',
+      payload: { score: state.score, username },
+    });
+  }, [state.score, isPvp, match?.id, screen, username, supabase]);
 
   useEffect(() => {
     if (screen !== 'playing' || localStorage.getItem('musicOn') !== 'true') return;
@@ -548,10 +583,11 @@ export default function GameBoard() {
     if (!error && data) {
       setMatch(data);
       const interval = setInterval(async () => {
-        const { data: updated } = await supabase.from('matches').select('*').eq('id', data.id).single();
+        const { data: updated } = await supabase.from('matches').select('*, profiles:opponent_id(username)').eq('id', data.id).single();
         if (updated?.status === 'playing') {
           clearInterval(interval);
           setMatch(updated);
+          if (updated.profiles?.username) setOpponentName(updated.profiles.username);
           startPvpGame(updated);
         }
       }, 1500);
@@ -565,10 +601,11 @@ export default function GameBoard() {
       .update({ opponent_id: user.id, status: 'playing', started_at: new Date().toISOString() })
       .eq('id', matchId)
       .eq('status', 'waiting')
-      .select()
+      .select('*, profiles:creator_id(username)')
       .single();
     if (!error && data) {
       setMatch(data);
+      if (data.profiles?.username) setOpponentName(data.profiles.username);
       startPvpGame(data);
     }
   };
@@ -582,6 +619,7 @@ export default function GameBoard() {
     setJustMerged(new Set());
     setShowLevelUp(false);
     setPvpResult(null);
+    setOpponentScore(0);
     setTool(null);
     setSwapFirst(null);
     setKeepGoing(false);
@@ -669,6 +707,7 @@ export default function GameBoard() {
     setJustMerged(new Set());
     setShowLevelUp(false);
     setPvpResult(null);
+    setOpponentScore(0);
     setTool(null);
     setSwapFirst(null);
     setDailyPlace(null);
@@ -1221,6 +1260,21 @@ export default function GameBoard() {
           </div>
         )}
 
+        {/* Live PvP Match Score HUD */}
+        {isPvp && (
+          <div className="w-full max-w-md mb-4 bg-white/80 backdrop-blur rounded-2xl p-3 shadow border border-white/60 flex items-center justify-around">
+            <div className="text-center">
+              <div className="text-[10px] uppercase font-bold text-[#8a6f5c]">You</div>
+              <div className="text-xl font-extrabold text-[#3d2b1f]">{state.score.toLocaleString()}</div>
+            </div>
+            <div className="text-xs font-black text-rose-500 uppercase px-2 py-1 bg-rose-100 rounded-full">VS</div>
+            <div className="text-center">
+              <div className="text-[10px] uppercase font-bold text-[#8a6f5c] truncate max-w-[100px]">{opponentName}</div>
+              <div className="text-xl font-extrabold text-purple-700">{opponentScore.toLocaleString()}</div>
+            </div>
+          </div>
+        )}
+
         {mark && !timed && (
           <div className="mb-3 text-sm font-semibold text-[#4a3728]">
             {state.score > mark.score
@@ -1372,6 +1426,7 @@ export default function GameBoard() {
                 {pvpResult === 'win' ? 'You win' : pvpResult === 'draw' ? 'Draw' : pvpResult === 'lose' ? 'Not this time' : 'Game over'}
               </div>
               <div className="text-[#6b5344]">Score {state.score.toLocaleString()}</div>
+              {isPvp && <div className="text-sm font-semibold text-purple-700 mt-1">{opponentName}: {opponentScore.toLocaleString()}</div>}
               <div className="text-sm text-[#8a6f5c] mt-1">Best tile {maxTile(state.grid) || '-'}</div>
               {dailyPlace && <div className="text-sm text-indigo-600 mt-2">{dailyPlace}</div>}
               {streak > 0 && <div className="text-sm font-semibold text-[#4a3728] mt-1">Streak {streak}</div>}
