@@ -111,31 +111,28 @@ export default function ProfilePage() {
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
-        .limit(8);
-      setScores(scoreData || []);
-
-      const { data: bestRow } = await supabase
-        .from('scores')
-        .select('score')
+        .limit(20);
+      const { data: dailyData } = await supabase
+        .from('daily_scores')
+        .select('*')
         .eq('user_id', user.id)
-        .order('score', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const { data: tileRow } = await supabase
-        .from('scores')
-        .select('max_tile')
-        .eq('user_id', user.id)
-        .order('max_tile', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const { count } = await supabase
-        .from('scores')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id);
+        .order('challenge_date', { ascending: false })
+        .limit(20);
+      const dailyRows = (dailyData || []).map((row: any) => ({
+        ...row,
+        mode: 'daily',
+        created_at: row.challenge_date,
+      }));
+      const recent = [...(scoreData || []), ...dailyRows]
+        .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+      setScores(recent.slice(0, 8));
 
-      setBest(bestRow?.score || 0);
-      setHighest(tileRow?.max_tile || 0);
-      setGameCount(count || scoreData?.length || 0);
+      const localBest = Number(localStorage.getItem('ns_best') || 0);
+      const bestScore = Math.max(localBest, 0, ...recent.map((row) => Number(row.score) || 0));
+      const bestTile = Math.max(0, ...recent.map((row) => Number(row.max_tile) || 0));
+      setBest(bestScore);
+      setHighest(bestTile);
+      setGameCount(recent.length);
 
       await loadNotifications(user.id);
       setLoading(false);
@@ -157,6 +154,28 @@ export default function ProfilePage() {
     if (!user) return;
     await supabase.from('notifications').update({ read: true }).eq('user_id', user.id).eq('read', false);
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  };
+
+  const acceptRequest = async (note: any) => {
+    if (!user || !note.from_user_id) return;
+    const { error } = await supabase
+      .from('friends')
+      .update({ status: 'accepted' })
+      .eq('user_id', note.from_user_id)
+      .eq('friend_id', user.id)
+      .eq('status', 'pending');
+    if (error) {
+      setUsernameMsg('Could not accept. Run the new Supabase rules, then try again.');
+      return;
+    }
+    await supabase.from('notifications').insert({
+      user_id: note.from_user_id,
+      type: 'friend_accepted',
+      title: 'Friend request accepted',
+      body: `${profile?.username || 'Someone'} accepted your friend request`,
+      from_user_id: user.id,
+    });
+    setNotifications((prev) => prev.map((n) => (n.id === note.id ? { ...n, type: 'friend_done', read: true } : n)));
   };
 
   const saveUsername = async () => {
@@ -308,6 +327,11 @@ export default function ProfilePage() {
                 <div key={n.id} className={`px-5 py-3 border-b border-[#f6eee8] last:border-0 ${!n.read ? 'bg-[#fff6ef]' : ''}`}>
                   <div className="font-medium text-sm text-[#3d2b1f]">{n.title}</div>
                   {n.body && <div className="text-xs text-[#8a6f5c] mt-0.5">{n.body}</div>}
+                  {n.type === 'friend_request' && (
+                    <button onClick={() => acceptRequest(n)} className="mt-2 bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-full">
+                      Accept
+                    </button>
+                  )}
                   <div className="text-[11px] text-[#b08978] mt-1">{new Date(n.created_at).toLocaleString()}</div>
                 </div>
               ))
@@ -422,8 +446,7 @@ export default function ProfilePage() {
 
             <button
               onClick={copyChallenge}
-              disabled={best <= 0}
-              className="mt-4 w-full bg-amber-400 text-[#3d2b1f] py-3.5 rounded-2xl font-semibold disabled:opacity-40"
+              className="mt-4 w-full bg-amber-400 text-[#3d2b1f] py-3.5 rounded-2xl font-semibold"
             >
               {copied ? 'Copied. Send it.' : 'Challenge a friend'}
             </button>
