@@ -58,20 +58,28 @@ export default function FriendsPage() {
   };
 
   const loadFriends = async (userId: string) => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('friends')
-      .select('*, friend:friend_id(id, username), requester:user_id(id, username)')
+      .select('*')
       .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
+    if (error) setSearchMsg(error.message);
+
+    const rows = data || [];
+    const ids = Array.from(new Set(rows.flatMap((f: any) => [f.user_id, f.friend_id]).filter(Boolean)));
+    const names = new Map<string, string>();
+    if (ids.length) {
+      const { data: people } = await supabase.from('profiles').select('id, username').in('id', ids);
+      (people || []).forEach((person: any) => names.set(person.id, person.username || 'Player'));
+    }
 
     const accepted: any[] = [];
     const pendingList: any[] = [];
-
-    (data || []).forEach((f: any) => {
+    rows.forEach((f: any) => {
       if (f.status === 'accepted') {
-        const other = f.user_id === userId ? f.friend : f.requester;
-        accepted.push({ ...f, other });
+        const otherId = f.user_id === userId ? f.friend_id : f.user_id;
+        accepted.push({ ...f, other: { id: otherId, username: names.get(otherId) || 'Player' } });
       } else if (f.friend_id === userId && f.status === 'pending') {
-        pendingList.push({ ...f, other: f.requester });
+        pendingList.push({ ...f, other: { id: f.user_id, username: names.get(f.user_id) || 'Player' } });
       }
     });
 
@@ -121,7 +129,7 @@ export default function FriendsPage() {
     }
   };
 
-    const acceptRequest = async (friendshipId: string, fromUserId: string) => {
+  const acceptRequest = async (friendshipId: string, fromUserId: string) => {
     const { error } = await supabase.from('friends').update({ status: 'accepted' }).eq('id', friendshipId);
     if (error) {
       setSearchMsg('Accept failed. Run the new Supabase rules, then try again.');
@@ -156,7 +164,7 @@ export default function FriendsPage() {
     const content = newMsg.trim();
     setNewMsg('');
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('messages')
       .insert({
         sender_id: user.id,
@@ -165,6 +173,12 @@ export default function FriendsPage() {
       })
       .select()
       .single();
+
+    if (error) {
+      setNewMsg(content);
+      setSearchMsg('Message did not send');
+      return;
+    }
 
     if (data) {
       setMessages((prev) => [...prev, data]);
@@ -200,6 +214,9 @@ export default function FriendsPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {messages.length === 0 && (
+            <p className="text-center text-sm text-[#8a6f5c] mt-8">No messages yet. Say something.</p>
+          )}
           {messages.map((m) => (
             <div
               key={m.id}
@@ -338,7 +355,7 @@ export default function FriendsPage() {
                     onClick={() => openChat(f)}
                     className="flex items-center gap-1.5 text-sm font-medium text-[#4a3728] bg-[#f8f4f0] px-3 py-1.5 rounded-full"
                   >
-                    <MessageCircle size={15} /> Chat
+                    <MessageCircle size={15} /> Message
                   </button>
                 </div>
               ))}
