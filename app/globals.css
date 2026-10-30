@@ -18,5 +18,14 @@
 }
 
 .animate-collapse3d {
-  animation: collapse3d 0.32s cubic-bezier(0.34, 1.4, 0.64, 1);
+  animation: collapse3d 0.16s ease-out;
 }
+
+@keyframes nudge-left { from { transform: translateX(14px); } to { transform: none; } }
+@keyframes nudge-right { from { transform: translateX(-14px); } to { transform: none; } }
+@keyframes nudge-up { from { transform: translateY(14px); } to { transform: none; } }
+@keyframes nudge-down { from { transform: translateY(-14px); } to { transform: none; } }
+.nudge-left { animation: nudge-left 0.09s linear; }
+.nudge-right { animation: nudge-right 0.09s linear; }
+.nudge-up { animation: nudge-up 0.09s linear; }
+.nudge-down { animation: nudge-down 0.09s linear; }
