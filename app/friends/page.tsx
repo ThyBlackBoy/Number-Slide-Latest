@@ -59,7 +59,7 @@ export default function FriendsPage() {
 
   const loadFriends = async (userId: string) => {
     const { data, error } = await supabase
-      .from('friends')
+      .from('friendships')
       .select('*')
       .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
     if (error) setSearchMsg(error.message);
@@ -108,13 +108,13 @@ export default function FriendsPage() {
   };
 
   const sendFriendRequest = async (friendId: string) => {
-    const { error } = await supabase.from('friends').insert({
+    const { error } = await supabase.from('friendships').insert({
       user_id: user.id,
       friend_id: friendId,
       status: 'pending',
     });
     if (error) {
-      setSearchMsg(error.message.includes('unique') ? 'Already sent or already friends' : 'Error');
+      setSearchMsg(error.message.includes('unique') ? 'Already sent or already friends' : 'Error sending request');
     } else {
       await createNotification(
         friendId,
@@ -130,11 +130,16 @@ export default function FriendsPage() {
   };
 
   const acceptRequest = async (friendshipId: string, fromUserId: string) => {
-    const { error } = await supabase.from('friends').update({ status: 'accepted' }).eq('id', friendshipId);
+    const { error } = await supabase
+      .from('friendships')
+      .update({ status: 'accepted' })
+      .eq('id', friendshipId);
+
     if (error) {
-      setSearchMsg('Accept failed. Run the new Supabase rules, then try again.');
+      setSearchMsg('Accept failed. Check database policies and try again.');
       return;
     }
+
     await createNotification(
       fromUserId,
       'friend_accepted',
