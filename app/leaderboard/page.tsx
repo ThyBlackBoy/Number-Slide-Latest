@@ -48,14 +48,15 @@ export default function LeaderboardPage() {
       setLoading(true);
       const today = lagosDate();
       if (tab === 'daily') {
-        setLabel(`Today ${today} · resets at midnight, Lagos`);
-        const { data } = await supabase
-          .from('daily_scores')
-          .select('user_id, score, max_tile, profiles(username)')
-          .eq('challenge_date', today)
-          .order('score', { ascending: false })
-          .limit(100);
-        setScores(bestRows(data || []));
+        setLabel(`Today ${today} · daily challenge and normal games · resets at midnight, Lagos`);
+        const since = new Date(`${today}T00:00:00+01:00`).toISOString();
+        const until = new Date(`${today}T23:59:59.999+01:00`).toISOString();
+        const [{ data: normal }, { data: daily }] = await Promise.all([
+          supabase.from('scores').select('user_id, score, max_tile, mode, profiles(username)').gte('created_at', since).lte('created_at', until).order('score', { ascending: false }).limit(200),
+          supabase.from('daily_scores').select('user_id, score, max_tile, profiles(username)').eq('challenge_date', today).order('score', { ascending: false }).limit(200),
+        ]);
+        const dailyRows = (daily || []).map((row: any) => ({ ...row, mode: 'daily' }));
+        setScores(bestRows([...(normal || []), ...dailyRows]));
       } else if (tab === 'weekly') {
         const start = weekStartLagos();
         setLabel(`This week from ${start} · resets every Monday, Lagos`);
