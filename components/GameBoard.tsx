@@ -33,11 +33,12 @@ interface HistoryItem {
   rngState: number;
 }
 
-type Mode = 'easy' | 'normal' | 'hard' | 'daily' | 'pvp' | 'duel';
+type Mode = 'easy' | 'normal' | 'hard' | 'classic' | 'daily' | 'pvp' | 'duel';
 type Screen = 'home' | 'pvp-lobby' | 'playing';
 type Tool = 'swap' | 'delete' | 'bomb' | null;
 
 const MODE_CONFIG = {
+  classic: { label: 'Classic', emoji: '🎮', desc: '4×4 · no power-ups' },
   easy: { label: 'Easy', emoji: '😊', desc: '4×4' },
   normal: { label: 'Normal', emoji: '😎', desc: '6×6' },
   hard: { label: 'Hard', emoji: '🔥', desc: '8×8' },
@@ -138,6 +139,10 @@ export default function GameBoard() {
   const [playedToday, setPlayedToday] = useState(true);
   const [throne, setThrone] = useState<{ name: string; score: number; mine: boolean; behind: number } | null>(null);
   const [mark, setMark] = useState<{ name: string; score: number; board: 'daily' | 'normal' } | null>(null);
+  const [notifs, setNotifs] = useState<any[]>([]);
+  const [showNotifs, setShowNotifs] = useState(false);
+  const [nudge, setNudge] = useState<Dir | null>(null);
+  const [pausedRun, setPausedRun] = useState<{ mode: Mode; state: GameState } | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scoreRef = useRef(0);
@@ -162,24 +167,32 @@ export default function GameBoard() {
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     const ctx = new AudioCtx();
     const master = ctx.createGain();
-    master.gain.value = 0.025;
+    master.gain.value = 0.02;
     master.connect(ctx.destination);
-    const oscs = [196, 247, 294].map((freq) => {
+    const notes = [174.61, 220, 261.63, 329.63, 261.63, 220];
+    let step = 0;
+    let stopped = false;
+    const play = () => {
+      if (stopped) return;
       const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
       const gain = ctx.createGain();
-      gain.gain.value = 0.2;
+      osc.type = 'sine';
+      osc.frequency.value = notes[step % notes.length];
+      step += 1;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.4, ctx.currentTime + 0.45);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.8);
       osc.connect(gain);
       gain.connect(master);
       osc.start();
-      return osc;
-    });
+      osc.stop(ctx.currentTime + 1.9);
+    };
+    play();
+    const timer = window.setInterval(play, 1600);
     ctx.resume();
     return () => {
-      oscs.forEach((osc) => {
-        try { osc.stop(); } catch { /* already stopped */ }
-      });
+      stopped = true;
+      window.clearInterval(timer);
       ctx.close();
     };
   }, [screen]);
@@ -191,6 +204,13 @@ export default function GameBoard() {
     setPlayedToday(localStorage.getItem('ns_daily_date') === lagosDate());
     const best = Number(localStorage.getItem('ns_best') || 0);
     if (best) setBestScore(best);
+    try {
+      const raw = localStorage.getItem('ns_active_run');
+      if (raw) {
+        const saved = JSON.parse(raw) as { mode: Mode; state: GameState };
+        if (saved?.state?.grid && !saved.state.gameOver) setPausedRun(saved);
+      }
+    } catch { /* ignore broken save */ }
 
     const params = new URLSearchParams(window.location.search);
     const beat = Number(params.get('beat') || 0);
@@ -252,6 +272,44 @@ export default function GameBoard() {
     });
     return () => subscription.unsubscribe();
   }, [supabase]);
+
+  useEffect(() => {
+    if (!user) return;
+    const seen = new Set<string>();
+    let first = true;
+    const chime = () => {
+      try {
+        const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+        const ctx = new Ctx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = 740;
+        gain.gain.setValueAtTime(0.06, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.26);
+        setTimeout(() => ctx.close(), 400);
+      } catch { /* ignore */ }
+    };
+    const pull = async () => {
+      const { data } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      const rows = data || [];
+      if (!first && rows.some((n: any) => !seen.has(n.id) && n.type === 'friend_request' && !n.read)) chime();
+      rows.forEach((n: any) => seen.add(n.id));
+      first = false;
+      setNotifs(rows);
+    };
+    pull();
+    const timer = window.setInterval(pull, 8000);
+    return () => window.clearInterval(timer);
+  }, [user, supabase]);
 
   useEffect(() => {
     if (!timed || screen !== 'playing') return;
@@ -333,7 +391,20 @@ export default function GameBoard() {
   };
 
   const saveScore = async (score: number, tile: number) => {
-    if (!user || score <= 0 || isPvp) return;
+    if (score <= 0 || isPvp) return;
+    if (!user) {
+      showToast('Sign in so the score can be saved');
+      return;
+    }
+    if (!(isDaily || isDuel)) {
+      const { error: scoreError } = await supabase.from('scores').insert({
+        user_id: user.id,
+        score,
+        mode: selectedMode || 'normal',
+        max_tile: tile,
+      });
+      if (scoreError) showToast('Score did not save');
+    }
     if (isDaily || isDuel) {
       const today = lagosDate();
       const { data: kings } = await supabase
@@ -350,12 +421,13 @@ export default function GameBoard() {
         .eq('challenge_date', today)
         .maybeSingle();
       if (!mineRow || score > mineRow.score) {
-        await supabase.from('daily_scores').upsert({
+        const { error: dailyError } = await supabase.from('daily_scores').upsert({
           user_id: user.id,
           score,
           max_tile: tile,
           challenge_date: today,
         }, { onConflict: 'user_id,challenge_date' });
+        if (dailyError) showToast('Daily score did not save');
         if (king && score > king.score) {
           const kingName = Array.isArray(king.profiles) ? king.profiles[0]?.username : king.profiles?.username;
           await supabase.from('notifications').insert({
@@ -388,12 +460,6 @@ export default function GameBoard() {
         .order('score', { ascending: false })
         .limit(5);
       const king: any = (kings || []).find((row: any) => row.user_id !== user.id);
-      await supabase.from('scores').insert({
-        user_id: user.id,
-        score,
-        mode: selectedMode,
-        max_tile: tile,
-      });
       if (king && score > king.score) {
         const kingName = Array.isArray(king.profiles) ? king.profiles[0]?.username : king.profiles?.username;
         await supabase.from('notifications').insert({
@@ -429,6 +495,17 @@ export default function GameBoard() {
     rngState: current.rngState,
   });
 
+  const persistRun = (mode: Mode | null, next: GameState) => {
+    if (!mode || mode === 'pvp' || next.gameOver) {
+      localStorage.removeItem('ns_active_run');
+      setPausedRun(null);
+      return;
+    }
+    const pack = { mode, state: next };
+    localStorage.setItem('ns_active_run', JSON.stringify(pack));
+    setPausedRun(pack);
+  };
+
   const loadOpenMatches = async () => {
     setLoadingLobby(true);
     const { data } = await supabase
@@ -439,6 +516,26 @@ export default function GameBoard() {
       .limit(10);
     setOpenMatches(data || []);
     setLoadingLobby(false);
+  };
+
+  const findMatch = async () => {
+    if (!user) return;
+    const { data: open, error } = await supabase
+      .from('matches')
+      .select('*')
+      .eq('status', 'waiting')
+      .neq('creator_id', user.id)
+      .order('created_at', { ascending: true })
+      .limit(1);
+    if (error) {
+      showToast('Match search failed. Update the Supabase rules.');
+      return;
+    }
+    if (open && open[0]) {
+      await joinMatch(open[0].id);
+      return;
+    }
+    await createMatch();
   };
 
   const createMatch = async () => {
@@ -536,6 +633,8 @@ export default function GameBoard() {
   const closeRun = (current: GameState) => {
     if (savedRun.current || isPvp) return;
     savedRun.current = true;
+    localStorage.removeItem('ns_active_run');
+    setPausedRun(null);
     const tile = maxTile(current.grid);
     rememberBest(current.score);
     setStreak(touchStreak());
@@ -555,9 +654,10 @@ export default function GameBoard() {
     }
     setSelectedMode(mode);
     const seed = mode === 'daily' ? todaySeed() : undefined;
-    const playMode = mode === 'daily' || mode === 'duel' ? 'normal' : mode;
-    const size = boardSizeFor(mode);
+    const playMode = mode === 'daily' || mode === 'duel' || mode === 'classic' ? 'normal' : mode;
+    const size = mode === 'classic' ? 4 : boardSizeFor(mode);
     const next = initializeGame(playMode, seed, size);
+    if (mode === 'classic') next.undosLeft = 0;
     if (mode === 'daily') {
       if (readStreak() >= 3) next.undosLeft += 1;
       localStorage.setItem('ns_daily_date', lagosDate());
@@ -575,7 +675,44 @@ export default function GameBoard() {
     setKeepGoing(false);
     savedRun.current = false;
     setTimeLeft(60);
+    persistRun(mode, next);
     setScreen('playing');
+  };
+
+  const continueRun = () => {
+    if (!pausedRun) return;
+    setSelectedMode(pausedRun.mode);
+    setState(pausedRun.state);
+    setHistory([]);
+    setPvpResult(null);
+    setShowLevelUp(false);
+    setTool(null);
+    savedRun.current = false;
+    setScreen('playing');
+  };
+
+  const acceptRequest = async (note: any) => {
+    if (!user || !note.from_user_id) return;
+    const { error } = await supabase
+      .from('friends')
+      .update({ status: 'accepted' })
+      .eq('user_id', note.from_user_id)
+      .eq('friend_id', user.id)
+      .eq('status', 'pending');
+    if (error) {
+      showToast('Could not accept yet');
+      return;
+    }
+    await supabase.from('notifications').insert({
+      user_id: note.from_user_id,
+      type: 'friend_accepted',
+      title: 'Friend request accepted',
+      body: `${username} accepted your friend request`,
+      from_user_id: user.id,
+    });
+    await supabase.from('notifications').update({ read: true }).eq('id', note.id);
+    setNotifs((prev) => prev.map((n) => (n.id === note.id ? { ...n, read: true, type: 'friend_done' } : n)));
+    showToast('Friend added');
   };
 
   const handleMove = useCallback((dir: Dir) => {
@@ -615,7 +752,10 @@ export default function GameBoard() {
       if (localStorage.getItem('hapticsOn') !== 'false' && navigator.vibrate) navigator.vibrate(12);
     }
     setCombo(result.scoreGained > 0 ? combo + 1 : 0);
+    setNudge(dir);
+    window.setTimeout(() => setNudge(null), 100);
     setState(result.state);
+    persistRun(selectedMode, result.state);
     setTool(null);
     setSwapFirst(null);
 
@@ -623,7 +763,7 @@ export default function GameBoard() {
       levelUp(playerLevel + 1, result.state.score);
     }
     if (result.state.gameOver) closeRun(result.state);
-  }, [screen, state, user, combo, soundOn, playerLevel, targetScore, showLevelUp, isDaily, isPvp, isDuel, timed, timeLeft, pvpResult, mark]);
+  }, [screen, state, user, combo, soundOn, playerLevel, targetScore, showLevelUp, isDaily, isPvp, isDuel, timed, timeLeft, pvpResult, mark, selectedMode]);
 
   const undo = () => {
     if (history.length === 0 || state.undosLeft <= 0 || isPvp) return;
@@ -797,11 +937,48 @@ export default function GameBoard() {
     else handleMove(dy > 0 ? 'down' : 'up');
   };
 
+  useEffect(() => {
+    if (screen !== 'pvp-lobby') return;
+    const timer = window.setInterval(loadOpenMatches, 3000);
+    return () => window.clearInterval(timer);
+  }, [screen, user]);
+
   if (screen === 'home') {
     return (
       <div className="min-h-screen bg-gradient-to-b from-[#f8d5c8] via-[#f4c7b8] to-[#e8b4a8] flex flex-col items-center justify-center p-6">
         <div className="w-full max-w-sm">
-          <div className="text-center mb-10">
+          <div className="flex items-center justify-between mb-4">
+            <Link href="/messages" className="bg-white/80 text-[#3d2b1f] text-sm font-semibold px-4 py-2 rounded-full shadow">
+              Chat
+            </Link>
+            <button
+              onClick={() => setShowNotifs((v) => !v)}
+              className="relative bg-white/80 text-[#3d2b1f] text-sm font-semibold px-4 py-2 rounded-full shadow"
+            >
+              Alerts
+              {notifs.some((n) => !n.read) && (
+                <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full" />
+              )}
+            </button>
+          </div>
+          {showNotifs && (
+            <div className="mb-4 bg-white rounded-2xl shadow max-h-64 overflow-y-auto">
+              {notifs.length === 0 ? (
+                <p className="p-4 text-sm text-[#8a6f5c]">No alerts yet</p>
+              ) : notifs.map((n) => (
+                <div key={n.id} className="px-4 py-3 border-b border-[#f6eee8]">
+                  <div className="text-sm font-semibold text-[#3d2b1f]">{n.title}</div>
+                  {n.body && <div className="text-xs text-[#8a6f5c]">{n.body}</div>}
+                  {n.type === 'friend_request' && (
+                    <button onClick={() => acceptRequest(n)} className="mt-2 bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-full">
+                      Accept
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="text-center mb-6">
             <h1 className="text-4xl font-extrabold text-[#3d2b1f] tracking-tight">Number Slide</h1>
             <div className="mt-3 inline-flex items-center gap-2 bg-white/70 backdrop-blur px-4 py-1.5 rounded-full shadow-sm">
               <span className="text-sm font-semibold text-[#4a3728]">Level {playerLevel}</span>
@@ -889,6 +1066,22 @@ export default function GameBoard() {
               <span className="text-3xl group-hover:scale-110 transition">⚔️</span>
             </button>
 
+            {pausedRun && (
+              <button
+                onClick={continueRun}
+                className="w-full bg-white text-[#3d2b1f] p-4 rounded-2xl text-left shadow-md"
+              >
+                <div className="font-bold">Continue your game</div>
+                <div className="text-sm text-[#6b5344]">{pausedRun.state.score.toLocaleString()} · {pausedRun.mode}</div>
+              </button>
+            )}
+            <button
+              onClick={() => startGame('classic')}
+              className="w-full bg-white/95 p-4 rounded-2xl text-left shadow-md"
+            >
+              <div className="font-bold text-[#3d2b1f]">Classic 2048</div>
+              <div className="text-sm text-[#6b5344]">4×4. No swap, delete, or bomb.</div>
+            </button>
             <div className="grid grid-cols-3 gap-2.5 pt-1">
               {(['easy', 'normal', 'hard'] as Mode[]).map((m) => {
                 const cfg = MODE_CONFIG[m];
@@ -938,11 +1131,11 @@ export default function GameBoard() {
             <p className="text-sm text-[#6b5344] mt-1">Create a match or join an open one</p>
           </div>
           <button
-            onClick={createMatch}
+            onClick={findMatch}
             disabled={!!match}
             className="w-full bg-gradient-to-r from-rose-500 to-orange-500 text-white py-4 rounded-2xl font-bold text-base shadow-lg shadow-rose-200/40 mb-5 disabled:opacity-60 active:scale-[0.98] transition"
           >
-            {match ? 'Waiting for opponent…' : 'Create Match · 60s'}
+            {match ? 'Waiting for opponent…' : 'Find a match'}
           </button>
           {match && (
             <div className="bg-white/90 backdrop-blur rounded-2xl p-5 mb-6 text-center shadow-md border border-white/50">
@@ -1042,7 +1235,7 @@ export default function GameBoard() {
           </div>
         )}
 
-        {!isDaily && !timed && (
+        {!isDaily && !timed && selectedMode !== 'classic' && (
           <div className="w-full max-w-md mb-4">
             <div className="flex justify-between text-sm text-[#4a3728] mb-1.5">
               <span className="font-bold">Level {playerLevel}</span>
@@ -1099,34 +1292,26 @@ export default function GameBoard() {
         <div
           onPointerDown={onPointerDown}
           onPointerUp={onPointerUp}
-          className={`bg-[#bbada0] rounded-2xl p-2 sm:p-3 shadow-xl touch-none select-none transition-all duration-200 ${
-            (state.size || 4) <= 4 ? '' : 'w-full max-w-md'
-          } ${bigMergeFlash ? 'scale-[1.03] brightness-110' : ''} ${danger ? 'ring-4 ring-red-500/80' : ''}`}
-          style={{ perspective: '800px' }}
+          className={`bg-[#bbada0] rounded-2xl p-2 shadow-xl touch-none select-none w-full max-w-[520px] ${
+            bigMergeFlash ? 'brightness-110' : ''
+          } ${danger ? 'ring-4 ring-red-500/80' : ''} ${nudge ? `nudge-${nudge}` : ''}`}
         >
           <div
-            className={(state.size || 4) <= 4 ? 'grid grid-cols-4 gap-2.5' : 'grid gap-1'}
-            style={(state.size || 4) <= 4 ? undefined : { gridTemplateColumns: `repeat(${state.size}, minmax(0, 1fr))` }}
+            className="grid gap-1.5"
+            style={{ gridTemplateColumns: `repeat(${state.size || 4}, minmax(0, 1fr))` }}
           >
             {state.grid.flat().map((value, i) => {
               const digits = value ? String(value).length : 0;
               const big = (state.size || 4) >= 8;
               const mid = (state.size || 4) === 6;
-              const text =
-                (state.size || 4) <= 4
-                  ? digits >= 5 ? 'text-sm' : digits >= 4 ? 'text-base' : 'text-2xl'
-                  : digits >= 6 ? 'text-[8px]' : digits >= 4 ? 'text-[10px]' : big ? 'text-xs' : mid ? 'text-sm' : 'text-base';
+              const text = digits >= 6 ? 'text-[10px]' : digits >= 4 ? (big ? 'text-[10px]' : 'text-sm') : big ? 'text-xs' : mid ? 'text-base' : 'text-2xl';
               return (
                 <button
                   key={i}
                   type="button"
                   onClick={() => useToolOn(i)}
                   style={getTileStyle(value)}
-                  className={`${
-                    (state.size || 4) <= 4
-                      ? 'w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem] rounded-xl'
-                      : 'aspect-square w-full rounded-md'
-                  } flex items-center justify-center font-bold shadow-inner transition-all duration-150 ${text} ${
+                  className={`aspect-square w-full rounded-md sm:rounded-lg flex items-center justify-center font-bold ${text} ${
                     justMerged.has(i) && localStorage.getItem('animationsOn') !== 'false' ? 'animate-collapse3d' : ''
                   } ${swapFirst === i ? 'outline outline-2 outline-white' : ''}`}
                 >
@@ -1139,7 +1324,7 @@ export default function GameBoard() {
 
         <p className="mt-3 text-xs font-medium text-[#6b5344]">{toolHint}</p>
 
-        <div className="mt-6 grid grid-cols-4 gap-2 w-full max-w-md">
+        {selectedMode !== 'classic' && <div className="mt-6 grid grid-cols-4 gap-2 w-full max-w-md">
           <button
             onClick={undo}
             disabled={state.undosLeft <= 0 || history.length === 0 || isPvp}
@@ -1172,7 +1357,7 @@ export default function GameBoard() {
             Bomb
             <div className="mt-1">{state.bombsLeft > 0 ? state.bombsLeft : 'at 256'}</div>
           </button>
-        </div>
+        </div>}
 
         {keepGoing && !state.gameOver && !pvpResult && (
           <button onClick={() => setKeepGoing(false)} className="mt-4 text-sm font-bold text-[#4a3728]">
@@ -1198,6 +1383,12 @@ export default function GameBoard() {
               </button>
               <button onClick={restart} className="w-full mt-2 bg-[#4a3728] text-white py-3.5 rounded-2xl font-semibold">
                 {isPvp ? 'Back to lobby' : 'Play again'}
+              </button>
+              <button
+                onClick={() => { setScreen('home'); setSelectedMode(null); setMatch(null); setPvpResult(null); }}
+                className="w-full mt-2 bg-[#f6eee8] text-[#3d2b1f] py-3.5 rounded-2xl font-semibold"
+              >
+                Back home
               </button>
             </div>
           </div>
