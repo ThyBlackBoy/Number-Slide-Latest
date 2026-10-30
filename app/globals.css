@@ -21,11 +21,13 @@
   animation: collapse3d 0.16s ease-out;
 }
 
-@keyframes nudge-left { from { transform: translateX(14px); } to { transform: none; } }
-@keyframes nudge-right { from { transform: translateX(-14px); } to { transform: none; } }
-@keyframes nudge-up { from { transform: translateY(14px); } to { transform: none; } }
-@keyframes nudge-down { from { transform: translateY(-14px); } to { transform: none; } }
-.nudge-left { animation: nudge-left 0.09s linear; }
-.nudge-right { animation: nudge-right 0.09s linear; }
-.nudge-up { animation: nudge-up 0.09s linear; }
-.nudge-down { animation: nudge-down 0.09s linear; }
+@keyframes tile-x {
+  from { transform: translateX(calc(var(--d) * (100% + 0.375rem))); }
+  to { transform: translateX(0); }
+}
+@keyframes tile-y {
+  from { transform: translateY(calc(var(--d) * (100% + 0.375rem))); }
+  to { transform: translateY(0); }
+}
+.tile-x { animation: tile-x 0.16s cubic-bezier(0.22, 0.8, 0.28, 1); }
+.tile-y { animation: tile-y 0.16s cubic-bezier(0.22, 0.8, 0.28, 1); }
