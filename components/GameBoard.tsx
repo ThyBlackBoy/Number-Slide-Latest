@@ -142,6 +142,7 @@ export default function GameBoard() {
   const [throne, setThrone] = useState<{ name: string; score: number; mine: boolean; behind: number } | null>(null);
   const [mark, setMark] = useState<{ name: string; score: number; board: 'daily' | 'normal' } | null>(null);
   const [notifs, setNotifs] = useState<any[]>([]);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [showNotifs, setShowNotifs] = useState(false);
   const [nudge, setNudge] = useState<Dir | null>(null);
   const [pausedRun, setPausedRun] = useState<{ mode: Mode; state: GameState } | null>(null);
@@ -308,41 +309,34 @@ export default function GameBoard() {
     return () => subscription.unsubscribe();
   }, [supabase]);
 
+  // Pull logic: Separate Alerts from Unread Messages
   useEffect(() => {
     if (!user) return;
-    const seen = new Set<string>();
-    let first = true;
-    const chime = () => {
-      try {
-        const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-        const ctx = new Ctx();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.frequency.value = 740;
-        gain.gain.setValueAtTime(0.06, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.26);
-        setTimeout(() => ctx.close(), 400);
-      } catch { /* ignore */ }
-    };
     const pull = async () => {
-      const { data } = await supabase
+      // 1. Fetch unread general alerts (excluding chat messages)
+      const { data: alerts } = await supabase
         .from('notifications')
         .select('*')
         .eq('user_id', user.id)
+        .eq('read', false)
+        .neq('type', 'message')
         .order('created_at', { ascending: false })
         .limit(20);
-      const rows = data || [];
-      if (!first && rows.some((n: any) => !seen.has(n.id) && n.type === 'friend_request' && !n.read)) chime();
-      rows.forEach((n: any) => seen.add(n.id));
-      first = false;
-      setNotifs(rows);
+
+      // 2. Fetch count of unread chat message notifications
+      const { count: chatCount } = await supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('type', 'message')
+        .eq('read', false);
+
+      setNotifs(alerts || []);
+      setUnreadChatCount(chatCount || 0);
     };
+
     pull();
-    const timer = window.setInterval(pull, 8000);
+    const timer = window.setInterval(pull, 5000);
     return () => window.clearInterval(timer);
   }, [user, supabase]);
 
@@ -732,16 +726,20 @@ export default function GameBoard() {
 
   const acceptRequest = async (note: any) => {
     if (!user || !note.from_user_id) return;
+
+    // 1. Accept in friendships table
     const { error } = await supabase
-      .from('friends')
+      .from('friendships')
       .update({ status: 'accepted' })
       .eq('user_id', note.from_user_id)
-      .eq('friend_id', user.id)
-      .eq('status', 'pending');
+      .eq('friend_id', user.id);
+
     if (error) {
       showToast('Could not accept yet');
       return;
     }
+
+    // 2. Notify requester
     await supabase.from('notifications').insert({
       user_id: note.from_user_id,
       type: 'friend_accepted',
@@ -749,8 +747,10 @@ export default function GameBoard() {
       body: `${username} accepted your friend request`,
       from_user_id: user.id,
     });
+
+    // 3. Mark alert as read in database and UI
     await supabase.from('notifications').update({ read: true }).eq('id', note.id);
-    setNotifs((prev) => prev.map((n) => (n.id === note.id ? { ...n, read: true, type: 'friend_done' } : n)));
+    setNotifs((prev) => prev.filter((n) => n.id !== note.id));
     showToast('Friend added');
   };
 
@@ -987,16 +987,23 @@ export default function GameBoard() {
       <div className="min-h-screen bg-gradient-to-b from-[#f8d5c8] via-[#f4c7b8] to-[#e8b4a8] flex flex-col items-center justify-center p-6">
         <div className="w-full max-w-sm">
           <div className="flex items-center justify-between mb-4">
-            <Link href="/messages" className="bg-white/80 text-[#3d2b1f] text-sm font-semibold px-4 py-2 rounded-full shadow">
+            <Link href="/messages" className="relative bg-white/80 text-[#3d2b1f] text-sm font-semibold px-4 py-2 rounded-full shadow">
               Chat
+              {unreadChatCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  {unreadChatCount}
+                </span>
+              )}
             </Link>
             <button
               onClick={() => setShowNotifs((v) => !v)}
               className="relative bg-white/80 text-[#3d2b1f] text-sm font-semibold px-4 py-2 rounded-full shadow"
             >
               Alerts
-              {notifs.some((n) => !n.read) && (
-                <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full" />
+              {notifs.length > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  {notifs.length}
+                </span>
               )}
             </button>
           </div>
@@ -1005,11 +1012,13 @@ export default function GameBoard() {
               {notifs.length === 0 ? (
                 <p className="p-4 text-sm text-[#8a6f5c]">No alerts yet</p>
               ) : notifs.map((n) => (
-                <div key={n.id} className="px-4 py-3 border-b border-[#f6eee8]">
-                  <div className="text-sm font-semibold text-[#3d2b1f]">{n.title}</div>
-                  {n.body && <div className="text-xs text-[#8a6f5c]">{n.body}</div>}
+                <div key={n.id} className="px-4 py-3 border-b border-[#f6eee8] flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-[#3d2b1f]">{n.title}</div>
+                    {n.body && <div className="text-xs text-[#8a6f5c]">{n.body}</div>}
+                  </div>
                   {n.type === 'friend_request' && (
-                    <button onClick={() => acceptRequest(n)} className="mt-2 bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-full">
+                    <button onClick={() => acceptRequest(n)} className="bg-green-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow">
                       Accept
                     </button>
                   )}
