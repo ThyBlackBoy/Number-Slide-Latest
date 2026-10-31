@@ -165,9 +165,7 @@ export default function GameBoard() {
     scoreRef.current = state.score;
   }, [state.score]);
 
-  // --------------------------------------------------------------------------
-  // SUPABASE REALTIME BROADCAST FOR PVP MATCHES
-  // --------------------------------------------------------------------------
+  // Realtime PvP Match Score Sync
   useEffect(() => {
     if (!isPvp || !match?.id || screen !== 'playing') return;
 
@@ -313,7 +311,6 @@ export default function GameBoard() {
   useEffect(() => {
     if (!user) return;
     const pull = async () => {
-      // 1. Fetch unread general alerts (excluding chat messages)
       const { data: alerts } = await supabase
         .from('notifications')
         .select('*')
@@ -323,7 +320,6 @@ export default function GameBoard() {
         .order('created_at', { ascending: false })
         .limit(20);
 
-      // 2. Fetch count of unread chat message notifications
       const { count: chatCount } = await supabase
         .from('notifications')
         .select('*', { count: 'exact', head: true })
@@ -336,9 +332,26 @@ export default function GameBoard() {
     };
 
     pull();
-    const timer = window.setInterval(pull, 5000);
+    const timer = window.setInterval(pull, 4000);
     return () => window.clearInterval(timer);
   }, [user, supabase]);
+
+  // Clear alerts badge upon opening popover
+  const toggleAlerts = async () => {
+    const nextState = !showNotifs;
+    setShowNotifs(nextState);
+
+    if (nextState && user && notifs.length > 0) {
+      await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('user_id', user.id)
+        .eq('read', false)
+        .neq('type', 'message');
+
+      setNotifs([]);
+    }
+  };
 
   useEffect(() => {
     if (!timed || screen !== 'playing') return;
@@ -549,17 +562,15 @@ export default function GameBoard() {
 
   const findMatch = async () => {
     if (!user) return;
-    const { data: open, error } = await supabase
+    setLoadingLobby(true);
+    const { data: open } = await supabase
       .from('matches')
       .select('*')
       .eq('status', 'waiting')
       .neq('creator_id', user.id)
       .order('created_at', { ascending: true })
       .limit(1);
-    if (error) {
-      showToast('Match search failed. Update the Supabase rules.');
-      return;
-    }
+
     if (open && open[0]) {
       await joinMatch(open[0].id);
       return;
@@ -574,17 +585,38 @@ export default function GameBoard() {
       .insert({ creator_id: user.id, status: 'waiting', time_limit: 60 })
       .select()
       .single();
-    if (!error && data) {
+
+    if (error) {
+      showToast('Error creating match');
+      setLoadingLobby(false);
+      return;
+    }
+
+    if (data) {
       setMatch(data);
-      const interval = setInterval(async () => {
-        const { data: updated } = await supabase.from('matches').select('*, profiles:opponent_id(username)').eq('id', data.id).single();
-        if (updated?.status === 'playing') {
-          clearInterval(interval);
-          setMatch(updated);
-          if (updated.profiles?.username) setOpponentName(updated.profiles.username);
-          startPvpGame(updated);
-        }
-      }, 1500);
+      setLoadingLobby(false);
+
+      // Realtime listener for opponent joining room
+      const channel = supabase
+        .channel(`match_room_${data.id}`)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'matches', filter: `id=eq.${data.id}` },
+          async (payload: any) => {
+            if (payload.new?.status === 'playing') {
+              supabase.removeChannel(channel);
+              const { data: updated } = await supabase
+                .from('matches')
+                .select('*, profiles:opponent_id(username)')
+                .eq('id', data.id)
+                .single();
+              setMatch(updated);
+              if (updated?.profiles?.username) setOpponentName(updated.profiles.username);
+              startPvpGame(updated);
+            }
+          }
+        )
+        .subscribe();
     }
   };
 
@@ -597,11 +629,16 @@ export default function GameBoard() {
       .eq('status', 'waiting')
       .select('*, profiles:creator_id(username)')
       .single();
-    if (!error && data) {
-      setMatch(data);
-      if (data.profiles?.username) setOpponentName(data.profiles.username);
-      startPvpGame(data);
+
+    if (error || !data) {
+      showToast('Match is no longer available');
+      loadOpenMatches();
+      return;
     }
+
+    setMatch(data);
+    if (data.profiles?.username) setOpponentName(data.profiles.username);
+    startPvpGame(data);
   };
 
   const startPvpGame = (m: any) => {
@@ -726,8 +763,6 @@ export default function GameBoard() {
 
   const acceptRequest = async (note: any) => {
     if (!user || !note.from_user_id) return;
-
-    // 1. Accept in friendships table
     const { error } = await supabase
       .from('friendships')
       .update({ status: 'accepted' })
@@ -738,8 +773,6 @@ export default function GameBoard() {
       showToast('Could not accept yet');
       return;
     }
-
-    // 2. Notify requester
     await supabase.from('notifications').insert({
       user_id: note.from_user_id,
       type: 'friend_accepted',
@@ -747,8 +780,6 @@ export default function GameBoard() {
       body: `${username} accepted your friend request`,
       from_user_id: user.id,
     });
-
-    // 3. Mark alert as read in database and UI
     await supabase.from('notifications').update({ read: true }).eq('id', note.id);
     setNotifs((prev) => prev.filter((n) => n.id !== note.id));
     showToast('Friend added');
@@ -996,7 +1027,7 @@ export default function GameBoard() {
               )}
             </Link>
             <button
-              onClick={() => setShowNotifs((v) => !v)}
+              onClick={toggleAlerts}
               className="relative bg-white/80 text-[#3d2b1f] text-sm font-semibold px-4 py-2 rounded-full shadow"
             >
               Alerts
@@ -1008,7 +1039,7 @@ export default function GameBoard() {
             </button>
           </div>
           {showNotifs && (
-            <div className="mb-4 bg-white rounded-2xl shadow max-h-64 overflow-y-auto">
+            <div className="mb-4 bg-white rounded-2xl shadow max-h-64 overflow-y-auto z-50">
               {notifs.length === 0 ? (
                 <p className="p-4 text-sm text-[#8a6f5c]">No alerts yet</p>
               ) : notifs.map((n) => (
@@ -1180,10 +1211,10 @@ export default function GameBoard() {
           </div>
           <button
             onClick={findMatch}
-            disabled={!!match}
+            disabled={loadingLobby || !!match}
             className="w-full bg-gradient-to-r from-rose-500 to-orange-500 text-white py-4 rounded-2xl font-bold text-base shadow-lg shadow-rose-200/40 mb-5 disabled:opacity-60 active:scale-[0.98] transition"
           >
-            {match ? 'Waiting for opponent…' : 'Find a match'}
+            {match ? 'Waiting for opponent…' : loadingLobby ? 'Searching…' : 'Find a match'}
           </button>
           {match && (
             <div className="bg-white/90 backdrop-blur rounded-2xl p-5 mb-6 text-center shadow-md border border-white/50">
