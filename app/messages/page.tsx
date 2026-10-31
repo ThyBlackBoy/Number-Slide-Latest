@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, Suspense } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Send, X } from 'lucide-react';
+import { Send, X, Swords, Trophy, Sparkles } from 'lucide-react';
 
 type Person = { id: string; username: string };
 type Row = { other: Person; last?: { content: string; created_at: string; sender_id: string } };
@@ -17,27 +17,17 @@ function MessagesPage() {
   const [messages, setMessages] = useState<any[]>([]);
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [targetGoal, setTargetGoal] = useState(2048);
   const endRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const params = useSearchParams();
   const supabase = createClient();
 
-  const seenKey = (id: string) => `ns_chat_seen_${id}`;
-
-  const markSeen = (id: string) => {
-    localStorage.setItem(seenKey(id), new Date().toISOString());
-  };
-
-  const unread = (row: Row) => {
-    if (!row.last || row.last.sender_id === user?.id) return false;
-    const seen = localStorage.getItem(seenKey(row.other.id));
-    if (!seen) return true;
-    return new Date(row.last.created_at).getTime() > new Date(seen).getTime();
-  };
-
   const loadInbox = async (userId: string) => {
+    // Fixed table name from 'friends' to 'friendships'
     const { data: links } = await supabase
-      .from('friends')
+      .from('friendships')
       .select('*')
       .or(`user_id.eq.${userId},friend_id.eq.${userId}`)
       .eq('status', 'accepted');
@@ -82,6 +72,14 @@ function MessagesPage() {
   };
 
   const loadThread = async (userId: string, other: Person) => {
+    // Automatically mark unread message notifications as read in Supabase
+    await supabase
+      .from('notifications')
+      .update({ read: true })
+      .eq('user_id', userId)
+      .eq('from_user_id', other.id)
+      .eq('type', 'message');
+
     const { data } = await supabase
       .from('messages')
       .select('*')
@@ -90,8 +88,8 @@ function MessagesPage() {
       )
       .order('created_at', { ascending: true })
       .limit(80);
+
     setMessages(data || []);
-    markSeen(other.id);
     setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 40);
   };
 
@@ -121,20 +119,18 @@ function MessagesPage() {
     return () => clearInterval(timer);
   }, [user, open]);
 
-  const send = async () => {
-    if (!user || !open || !text.trim()) return;
-    const content = text.trim();
-    setText('');
+  const send = async (contentToSend?: string) => {
+    const content = (contentToSend || text).trim();
+    if (!user || !open || !content) return;
+    if (!contentToSend) setText('');
+
     const { data, error } = await supabase
       .from('messages')
       .insert({ sender_id: user.id, receiver_id: open.id, content })
       .select()
       .single();
-    if (error) {
-      setText(content);
-      return;
-    }
-    if (data) {
+
+    if (!error && data) {
       setMessages((prev) => [...prev, data]);
       await supabase.from('notifications').insert({
         user_id: open.id,
@@ -143,15 +139,20 @@ function MessagesPage() {
         body: `${profile?.username || 'Someone'}: ${content.slice(0, 60)}`,
         from_user_id: user.id,
       });
-      markSeen(open.id);
       setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 40);
     }
+  };
+
+  const sendMatchInvite = async () => {
+    setShowInviteModal(false);
+    const inviteText = `[INVITE:${targetGoal}] ⚔️ Challenge: First to reach ${targetGoal.toLocaleString()} points wins!`;
+    await send(inviteText);
   };
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#f8d5c8] to-[#e8b4a8] text-[#6b5344]">
-        Loading messages
+        Loading messages…
       </div>
     );
   }
@@ -159,56 +160,164 @@ function MessagesPage() {
   if (open) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-[#f8d5c8] to-[#e8b4a8] flex flex-col">
-        <div className="bg-white/90 px-4 py-3 flex items-center gap-3 shadow">
-          <button
-            onClick={() => {
-              setOpen(null);
-              if (user) loadInbox(user.id);
-              router.replace('/messages');
-            }}
-            className="text-[#4a3728]"
-          >
-            <X size={22} />
-          </button>
-          <div>
-            <div className="font-bold text-[#3d2b1f]">{open.username}</div>
-            <div className="text-[11px] text-[#a08070]">Friend</div>
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {messages.length === 0 && (
-            <p className="text-center text-sm text-[#8a6f5c] mt-10">No messages yet. Say something.</p>
-          )}
-          {messages.map((m) => (
-            <div key={m.id} className={`flex ${m.sender_id === user.id ? 'justify-end' : 'justify-start'}`}>
-              <div
-                className={`max-w-[75%] px-4 py-2 rounded-2xl text-sm ${
-                  m.sender_id === user.id
-                    ? 'bg-[#3d2b1f] text-white rounded-br-md'
-                    : 'bg-white text-[#3d2b1f] rounded-bl-md shadow'
-                }`}
-              >
-                <div>{m.content}</div>
-                <div className={`text-[10px] mt-1 ${m.sender_id === user.id ? 'text-white/60' : 'text-[#b08978]'}`}>
-                  {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </div>
+        {/* Header */}
+        <div className="bg-white/90 backdrop-blur px-4 py-3 flex items-center justify-between shadow border-b border-white/40">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                setOpen(null);
+                if (user) loadInbox(user.id);
+                router.replace('/messages');
+              }}
+              className="text-[#4a3728]"
+            >
+              <X size={22} />
+            </button>
+            <div>
+              <div className="font-bold text-[#3d2b1f] flex items-center gap-1.5">
+                {open.username}
+                <Sparkles size={14} className="text-amber-500" />
               </div>
+              <div className="text-[11px] text-[#a08070]">Friend</div>
             </div>
-          ))}
+          </div>
+
+          <button
+            onClick={() => setShowInviteModal(true)}
+            className="flex items-center gap-1.5 bg-gradient-to-r from-rose-500 to-orange-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow active:scale-95 transition"
+          >
+            <Swords size={14} /> Invite to Match
+          </button>
+        </div>
+
+        {/* Message Stream */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {messages.length === 0 && (
+            <div className="text-center mt-12 bg-white/40 backdrop-blur rounded-2xl p-6 max-w-xs mx-auto text-[#8a6f5c]">
+              <Trophy size={32} className="mx-auto mb-2 text-amber-500" />
+              <p className="font-semibold text-[#3d2b1f]">No messages yet</p>
+              <p className="text-xs mt-1">Send a greeting or challenge them to a match!</p>
+            </div>
+          )}
+
+          {messages.map((m) => {
+            const isMe = m.sender_id === user.id;
+            const isInvite = m.content.startsWith('[INVITE:');
+            let inviteTarget = 2048;
+
+            if (isInvite) {
+              const match = m.content.match(/\[INVITE:(\d+)\]/);
+              if (match) inviteTarget = parseInt(match[1], 10);
+            }
+
+            return (
+              <div key={m.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                {isInvite ? (
+                  <div className="bg-gradient-to-br from-indigo-900 to-slate-800 text-white p-4 rounded-2xl max-w-[80%] shadow-lg border border-indigo-400/30">
+                    <div className="flex items-center gap-2 font-bold text-amber-300 text-sm mb-1">
+                      <Swords size={16} /> MATCH CHALLENGE
+                    </div>
+                    <div className="text-sm font-extrabold mb-2">
+                      Goal: First to {inviteTarget.toLocaleString()} pts
+                    </div>
+                    <Link
+                      href={`/?beat=${inviteTarget}&from=${encodeURIComponent(profile?.username || 'Friend')}`}
+                      className="block text-center bg-gradient-to-r from-amber-400 to-orange-400 text-slate-900 text-xs font-extrabold py-2 px-4 rounded-xl shadow active:scale-95 transition"
+                    >
+                      Accept & Play
+                    </Link>
+                  </div>
+                ) : (
+                  <div
+                    className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm shadow-sm ${
+                      isMe
+                        ? 'bg-[#3d2b1f] text-white rounded-br-none'
+                        : 'bg-white text-[#3d2b1f] rounded-bl-none'
+                    }`}
+                  >
+                    <div>{m.content}</div>
+                    <div className={`text-[9px] mt-1 text-right ${isMe ? 'text-white/60' : 'text-[#b08978]'}`}>
+                      {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
           <div ref={endRef} />
         </div>
-        <div className="p-3 bg-white/90 flex gap-2">
+
+        {/* Emoji Reactions */}
+        <div className="px-3 py-1.5 bg-white/60 backdrop-blur flex items-center justify-around text-lg border-t border-white/40">
+          {['🔥', '⚔️', '👑', '👏', '😂', '🎯'].map((emoji) => (
+            <button
+              key={emoji}
+              onClick={() => send(emoji)}
+              className="hover:scale-125 transition-transform"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+
+        {/* Input Bar */}
+        <div className="p-3 bg-white/90 backdrop-blur flex gap-2 border-t border-white/50">
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && send()}
-            placeholder="Message"
-            className="flex-1 px-4 py-2.5 rounded-full border border-[#eadfd6] outline-none text-sm"
+            placeholder="Type a message..."
+            className="flex-1 px-4 py-2.5 rounded-full border border-[#eadfd6] outline-none text-sm bg-white"
           />
-          <button onClick={send} className="w-11 h-11 rounded-full bg-[#3d2b1f] text-white flex items-center justify-center">
+          <button
+            onClick={() => send()}
+            className="w-11 h-11 rounded-full bg-[#3d2b1f] text-white flex items-center justify-center shadow"
+          >
             <Send size={18} />
           </button>
         </div>
+
+        {/* Challenge Modal */}
+        {showInviteModal && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-6 z-50">
+            <div className="bg-white rounded-3xl p-6 text-center max-w-xs w-full shadow-2xl">
+              <Swords className="mx-auto mb-2 text-rose-500" size={32} />
+              <h3 className="font-extrabold text-lg text-[#3d2b1f]">Invite for Match</h3>
+              <p className="text-xs text-[#8a6f5c] mb-4">Set a target score. First to reach it wins!</p>
+
+              <div className="space-y-2 mb-5">
+                {[1000, 2048, 5000].map((goal) => (
+                  <button
+                    key={goal}
+                    onClick={() => setTargetGoal(goal)}
+                    className={`w-full py-2.5 rounded-xl font-bold text-sm border transition ${
+                      targetGoal === goal
+                        ? 'bg-rose-500 text-white border-rose-500 shadow'
+                        : 'bg-gray-50 text-[#3d2b1f] border-gray-200'
+                    }`}
+                  >
+                    Target: {goal.toLocaleString()} pts
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowInviteModal(false)}
+                  className="flex-1 py-2.5 bg-gray-100 text-[#3d2b1f] text-xs font-bold rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={sendMatchInvite}
+                  className="flex-1 py-2.5 bg-rose-500 text-white text-xs font-bold rounded-xl shadow"
+                >
+                  Send Challenge
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -218,13 +327,12 @@ function MessagesPage() {
       <div className="max-w-md mx-auto">
         <Link href="/" className="text-sm font-semibold text-[#3d2b1f]">← Back to Game</Link>
         <h1 className="mt-6 text-3xl font-extrabold text-[#3d2b1f]">Messages</h1>
-        <p className="text-sm text-[#8a6f5c] mt-1">Your chats stay here.</p>
 
         <div className="mt-6 bg-white rounded-[28px] shadow-xl overflow-hidden">
           {rows.length === 0 ? (
             <div className="p-8 text-center">
               <p className="text-sm text-[#8a6f5c]">No friends yet.</p>
-              <Link href="/friends" className="inline-block mt-3 text-sm font-semibold text-[#3d2b1f] underline underline-offset-4">
+              <Link href="/friends" className="inline-block mt-3 text-sm font-semibold text-[#3d2b1f] underline">
                 Add a friend
               </Link>
             </div>
@@ -238,23 +346,17 @@ function MessagesPage() {
                 }}
                 className="w-full flex items-center gap-3 px-5 py-4 border-b border-[#f4ebe4] last:border-0 text-left"
               >
-                <div className="w-11 h-11 rounded-full bg-[#f4c7b8] flex items-center justify-center font-bold text-[#3d2b1f] shrink-0">
+                <div className="w-11 h-11 rounded-full bg-gradient-to-br from-orange-400 to-rose-400 flex items-center justify-center font-extrabold text-white shrink-0 shadow-sm">
                   {(row.other.username || 'P').slice(0, 1).toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold text-[#3d2b1f] truncate">{row.other.username}</span>
-                    {row.last && (
-                      <span className="text-[11px] text-[#b08978] shrink-0">
-                        {new Date(row.last.created_at).toLocaleDateString()}
-                      </span>
-                    )}
                   </div>
                   <div className="text-sm text-[#8a6f5c] truncate">
                     {row.last ? row.last.content : 'No messages yet'}
                   </div>
                 </div>
-                {unread(row) && <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" />}
               </button>
             ))
           )}
