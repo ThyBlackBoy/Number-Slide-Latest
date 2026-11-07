@@ -3,27 +3,23 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import Link from 'next/link';
-import { Trophy, Calendar, Clock, Crown } from 'lucide-react';
+import { Trophy, Calendar, Crown } from 'lucide-react';
 
-type Tab = 'daily' | 'weekly' | 'alltime';
+type Tab = 'daily' | 'alltime';
 
 function lagosDate(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
-}
-
-function weekStartLagos(): string {
-  const [y, m, d] = lagosDate().split('-').map(Number);
-  const utc = new Date(Date.UTC(y, m - 1, d));
-  utc.setUTCDate(utc.getUTCDate() - ((utc.getUTCDay() + 6) % 7));
-  const mm = String(utc.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(utc.getUTCDate()).padStart(2, '0');
-  return `${utc.getUTCFullYear()}-${mm}-${dd}`;
 }
 
 function nameOf(row: any): string {
   const p = row.profiles;
   if (Array.isArray(p)) return p[0]?.username || 'Player';
   return p?.username || 'Player';
+}
+
+function levelOf(row: any): number {
+  const p = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+  return Math.max(1, Number(p?.level) || 1);
 }
 
 function bestRows(rows: any[]) {
@@ -52,26 +48,16 @@ export default function LeaderboardPage() {
         const since = new Date(`${today}T00:00:00+01:00`).toISOString();
         const until = new Date(`${today}T23:59:59.999+01:00`).toISOString();
         const [{ data: normal }, { data: daily }] = await Promise.all([
-          supabase.from('scores').select('user_id, score, max_tile, mode, profiles(username)').gte('created_at', since).lte('created_at', until).order('score', { ascending: false }).limit(200),
-          supabase.from('daily_scores').select('user_id, score, max_tile, profiles(username)').eq('challenge_date', today).order('score', { ascending: false }).limit(200),
-        ]);
-        const dailyRows = (daily || []).map((row: any) => ({ ...row, mode: 'daily' }));
-        setScores(bestRows([...(normal || []), ...dailyRows]));
-      } else if (tab === 'weekly') {
-        const start = weekStartLagos();
-        setLabel(`This week from ${start} · resets every Monday, Lagos`);
-        const since = new Date(`${start}T00:00:00+01:00`).toISOString();
-        const [{ data: normal }, { data: daily }] = await Promise.all([
-          supabase.from('scores').select('user_id, score, max_tile, mode, profiles(username)').gte('created_at', since).order('score', { ascending: false }).limit(200),
-          supabase.from('daily_scores').select('user_id, score, max_tile, profiles(username)').gte('challenge_date', start).order('score', { ascending: false }).limit(200),
+          supabase.from('scores').select('user_id, score, max_tile, mode, profiles(username, level)').gte('created_at', since).lte('created_at', until).order('score', { ascending: false }).limit(200),
+          supabase.from('daily_scores').select('user_id, score, max_tile, profiles(username, level)').eq('challenge_date', today).order('score', { ascending: false }).limit(200),
         ]);
         const dailyRows = (daily || []).map((row: any) => ({ ...row, mode: 'daily' }));
         setScores(bestRows([...(normal || []), ...dailyRows]));
       } else {
         setLabel('All time');
         const [{ data: normal }, { data: daily }] = await Promise.all([
-          supabase.from('scores').select('user_id, score, max_tile, mode, profiles(username)').order('score', { ascending: false }).limit(200),
-          supabase.from('daily_scores').select('user_id, score, max_tile, profiles(username)').order('score', { ascending: false }).limit(200),
+          supabase.from('scores').select('user_id, score, max_tile, mode, profiles(username, level)').order('score', { ascending: false }).limit(200),
+          supabase.from('daily_scores').select('user_id, score, max_tile, profiles(username, level)').order('score', { ascending: false }).limit(200),
         ]);
         const dailyRows = (daily || []).map((row: any) => ({ ...row, mode: 'daily' }));
         setScores(bestRows([...(normal || []), ...dailyRows]));
@@ -82,9 +68,8 @@ export default function LeaderboardPage() {
   }, [tab, supabase]);
 
   const tabs = [
-    { id: 'daily' as Tab, label: 'Daily', icon: Calendar },
-    { id: 'weekly' as Tab, label: 'Weekly', icon: Clock },
-    { id: 'alltime' as Tab, label: 'All Time', icon: Crown },
+    { id: 'daily' as Tab, label: 'Daily Top', icon: Calendar },
+    { id: 'alltime' as Tab, label: 'All-Time', icon: Crown },
   ];
 
   return (
@@ -114,7 +99,10 @@ export default function LeaderboardPage() {
                 <div key={`${s.user_id || i}-${s.score}`} className="flex items-center gap-4 px-4 py-3">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${i === 0 ? 'bg-yellow-400 text-white' : i === 1 ? 'bg-gray-300 text-gray-700' : i === 2 ? 'bg-orange-400 text-white' : 'bg-gray-100 text-gray-600'}`}>{i + 1}</div>
                   <div className="flex-1">
-                    <div className="font-semibold text-[#4a3728]">{nameOf(s)}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-semibold text-[#4a3728]">{nameOf(s)}</div>
+                      <span className="rounded-full bg-[#f6eee8] px-2 py-0.5 text-[10px] font-bold text-[#7a5b48]">Level {levelOf(s)}</span>
+                    </div>
                     {s.mode && <div className="text-xs text-gray-500 capitalize">{s.mode}</div>}
                   </div>
                   <div className="text-right">

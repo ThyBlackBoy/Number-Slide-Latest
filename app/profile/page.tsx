@@ -31,8 +31,10 @@ function readStreak(): number {
   try {
     const raw = localStorage.getItem('ns_streak');
     if (!raw) return 0;
-    const saved = JSON.parse(raw) as { count?: number };
-    return saved.count || 0;
+    const saved = JSON.parse(raw) as { date?: string; count?: number };
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
+    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' });
+    return saved.date === today || saved.date === yesterday ? Number(saved.count) || 0 : 0;
   } catch {
     return 0;
   }
@@ -127,9 +129,22 @@ export default function ProfilePage() {
         .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
       setScores(recent.slice(0, 8));
 
+      const [
+        { data: bestScores },
+        { data: bestDailyScores },
+        { data: bestTiles },
+        { data: bestDailyTiles },
+      ] = await Promise.all([
+        supabase.from('scores').select('score').eq('user_id', user.id).order('score', { ascending: false }).limit(1),
+        supabase.from('daily_scores').select('score').eq('user_id', user.id).order('score', { ascending: false }).limit(1),
+        supabase.from('scores').select('max_tile').eq('user_id', user.id).order('max_tile', { ascending: false }).limit(1),
+        supabase.from('daily_scores').select('max_tile').eq('user_id', user.id).order('max_tile', { ascending: false }).limit(1),
+      ]);
+      const allTimeRows = [...(bestScores || []), ...(bestDailyScores || [])];
+      const allTimeTileRows = [...(bestTiles || []), ...(bestDailyTiles || [])];
       const localBest = Number(localStorage.getItem('ns_best') || 0);
-      const bestScore = Math.max(localBest, 0, ...recent.map((row) => Number(row.score) || 0));
-      const bestTile = Math.max(0, ...recent.map((row) => Number(row.max_tile) || 0));
+      const bestScore = Math.max(localBest, 0, ...recent.map((row) => Number(row.score) || 0), ...allTimeRows.map((row) => Number(row.score) || 0));
+      const bestTile = Math.max(0, ...recent.map((row) => Number(row.max_tile) || 0), ...allTimeTileRows.map((row) => Number(row.max_tile) || 0));
       setBest(bestScore);
       setHighest(bestTile);
       setGameCount(recent.length);
@@ -433,7 +448,7 @@ export default function ProfilePage() {
               </div>
               <div className="flex-1 grid grid-cols-2 gap-2">
                 <div className="bg-[#3d2b1f] text-white rounded-2xl px-3 py-2.5">
-                  <div className="text-[10px] uppercase tracking-wider text-white/60">Best</div>
+                  <div className="text-[10px] uppercase tracking-wider text-white/60">All-time high</div>
                   <div className="text-xl font-extrabold tabular-nums">{best.toLocaleString()}</div>
                 </div>
                 <div className="bg-[#fff6ef] text-[#3d2b1f] rounded-2xl px-3 py-2.5 border border-[#f0e0d4]">

@@ -29,3 +29,25 @@ export const STATES = [
   'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba',
   'Yobe', 'Zamfara',
 ];
+
+export interface LevelReward {
+  undos: number;
+  swaps: number;
+  deletes: number;
+  bombs: number;
+  label: string;
+}
+
+export function getLevelReward(level: number): LevelReward {
+  const reward = {
+    undos: 1,
+    swaps: level % 5 === 0 ? 1 : 0,
+    deletes: level % 4 === 0 ? 1 : 0,
+    bombs: level % 3 === 0 ? 1 : 0,
+  };
+  const items = ['+1 Undo'];
+  if (reward.swaps) items.push('+1 Swap');
+  if (reward.deletes) items.push('+1 Delete');
+  if (reward.bombs) items.push('+1 Bomb');
+  return { ...reward, label: items.join(' · ') };
+}

@@ -18,7 +18,7 @@ import {
   Dir,
   boardSizeFor,
 } from '@/lib/gameLogic';
-import { getTargetScore, getLevelTitle } from '@/lib/levels';
+import { getTargetScore, getLevelReward, getLevelTitle } from '@/lib/levels';
 import { Undo2, RotateCcw, Volume2, VolumeX, Calendar, Swords, Users } from 'lucide-react';
 import Link from 'next/link';
 
@@ -121,6 +121,7 @@ export default function GameBoard() {
   const [bigMergeFlash, setBigMergeFlash] = useState(false);
   const [playerLevel, setPlayerLevel] = useState(1);
   const [showLevelUp, setShowLevelUp] = useState(false);
+  const [levelRewardText, setLevelRewardText] = useState('');
   const [match, setMatch] = useState<any>(null);
   const [openMatches, setOpenMatches] = useState<any[]>([]);
   const [timeLeft, setTimeLeft] = useState(60);
@@ -517,7 +518,16 @@ export default function GameBoard() {
   };
 
   const levelUp = async (newLevel: number, score: number) => {
+    const reward = getLevelReward(newLevel);
     setPlayerLevel(newLevel);
+    setLevelRewardText(reward.label);
+    setState((current) => ({
+      ...current,
+      undosLeft: current.undosLeft + reward.undos,
+      swapsLeft: current.swapsLeft + reward.swaps,
+      deletesLeft: current.deletesLeft + reward.deletes,
+      bombsLeft: current.bombsLeft + reward.bombs,
+    }));
     setShowLevelUp(true);
     playTone(660, 0.15);
     if (user) {
@@ -1495,9 +1505,10 @@ export default function GameBoard() {
               <div className="text-5xl mb-3">🎉</div>
               <div className="text-2xl font-extrabold text-[#3d2b1f] mb-1">Level up</div>
               <div className="text-[#6b5344] mb-1">Level {playerLevel}</div>
-              <div className="text-sm text-[#8a6f5c] mb-6">{getLevelTitle(playerLevel)}</div>
+              <div className="text-sm text-[#8a6f5c] mb-2">{getLevelTitle(playerLevel)}</div>
+              <div className="text-sm font-bold text-amber-700 mb-6">Reward: {levelRewardText}</div>
               <button
-                onClick={() => { setShowLevelUp(false); restart(); }}
+                onClick={() => setShowLevelUp(false)}
                 className="w-full bg-[#4a3728] text-white py-3.5 rounded-2xl font-semibold"
               >
                 Continue
