@@ -66,6 +66,51 @@ function getTileStyle(value: number | null): CSSProperties {
   return { backgroundColor: style.bg, color: style.color };
 }
 
+type TileIdGrid = (number | null)[][];
+
+function buildTileIdGrid(grid: Grid, allocateId: () => number): TileIdGrid {
+  return grid.map((row) => row.map((value) => value === null ? null : allocateId()));
+}
+
+function slideTileIds(grid: Grid, tileIds: TileIdGrid, dir: Dir): { ids: TileIdGrid; mergedIndices: number[] } {
+  const size = grid.length || 4;
+  const ids: TileIdGrid = Array.from({ length: size }, () => Array(size).fill(null));
+  const mergedIndices: number[] = [];
+
+  for (let line = 0; line < size; line++) {
+    const coordinates: [number, number][] = Array.from({ length: size }, (_, offset) => {
+      if (dir === 'left') return [line, offset];
+      if (dir === 'right') return [line, size - 1 - offset];
+      if (dir === 'up') return [offset, line];
+      return [size - 1 - offset, line];
+    });
+    const tiles = coordinates.flatMap(([row, col]) => {
+      const value = grid[row][col];
+      if (value === null) return [];
+      return [{ value, id: tileIds[row]?.[col] ?? row * size + col + 1 }];
+    });
+    const compacted: { value: number; id: number }[] = [];
+
+    for (let index = 0; index < tiles.length; index++) {
+      if (index + 1 < tiles.length && tiles[index].value === tiles[index + 1].value) {
+        compacted.push({ value: tiles[index].value * 2, id: tiles[index].id });
+        const [row, col] = coordinates[compacted.length - 1];
+        mergedIndices.push(row * size + col);
+        index++;
+      } else {
+        compacted.push(tiles[index]);
+      }
+    }
+
+    compacted.forEach((tile, index) => {
+      const [row, col] = coordinates[index];
+      ids[row][col] = tile.id;
+    });
+  }
+
+  return { ids, mergedIndices };
+}
+
 function readStreak(): number {
   try {
     const raw = localStorage.getItem('ns_streak');
@@ -112,6 +157,9 @@ export default function GameBoard() {
   const [screen, setScreen] = useState<Screen>('home');
   const [selectedMode, setSelectedMode] = useState<Mode | null>(null);
   const [state, setState] = useState<GameState>(() => initializeGame('easy'));
+  const [tileIds, setTileIds] = useState<TileIdGrid>([]);
+  const [spawnedTileId, setSpawnedTileId] = useState<number | null>(null);
+  const [animationsOn, setAnimationsOn] = useState(true);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [user, setUser] = useState<any>(null);
   const [username, setUsername] = useState('player');
@@ -151,8 +199,13 @@ export default function GameBoard() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scoreRef = useRef(0);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
+  const tileIdCounterRef = useRef(0);
   const savedRun = useRef(false);
   const supabase = createClient();
+  const freshTileIds = useCallback((grid: Grid): TileIdGrid => buildTileIdGrid(grid, () => {
+    tileIdCounterRef.current += 1;
+    return tileIdCounterRef.current;
+  }), []);
 
   const targetScore = getTargetScore(playerLevel);
   const isDaily = selectedMode === 'daily';
@@ -235,6 +288,8 @@ export default function GameBoard() {
   useEffect(() => {
     const saved = localStorage.getItem('soundOn');
     if (saved !== null) setSoundOn(saved === 'true');
+    const savedAnimations = localStorage.getItem('animationsOn');
+    if (savedAnimations !== null) setAnimationsOn(savedAnimations !== 'false');
     setStreak(readStreak());
     setPlayedToday(localStorage.getItem('ns_daily_date') === lagosDate());
     const best = Number(localStorage.getItem('ns_best') || 0);
@@ -654,7 +709,10 @@ export default function GameBoard() {
   const startPvpGame = (m: any) => {
     setSelectedMode('pvp');
     setMatch(m);
-    setState(initializeGame('normal', undefined, 4));
+    const initialState = initializeGame('normal', undefined, 4);
+    setState(initialState);
+    setTileIds(freshTileIds(initialState.grid));
+    setSpawnedTileId(null);
     setHistory([]);
     setCombo(0);
     setJustMerged(new Set());
@@ -743,6 +801,8 @@ export default function GameBoard() {
       setPlayedToday(true);
     }
     setState(next);
+    setTileIds(freshTileIds(next.grid));
+    setSpawnedTileId(null);
     setHistory([]);
     setCombo(0);
     setJustMerged(new Set());
@@ -763,6 +823,8 @@ export default function GameBoard() {
     if (!pausedRun) return;
     setSelectedMode(pausedRun.mode);
     setState(pausedRun.state);
+    setTileIds(freshTileIds(pausedRun.state.grid));
+    setSpawnedTileId(null);
     setHistory([]);
     setPvpResult(null);
     setShowLevelUp(false);
@@ -801,6 +863,28 @@ export default function GameBoard() {
     const result = playMove(state, dir);
     if (!result) return;
 
+    const idsBeforeMove = tileIds.length === state.size ? tileIds : freshTileIds(state.grid);
+    const movedTiles = slideTileIds(state.grid, idsBeforeMove, dir);
+    const nextTileIds = movedTiles.ids.map((row) => [...row]);
+    let spawnedId: number | null = null;
+    result.state.grid.forEach((row, rowIndex) => {
+      row.forEach((value, colIndex) => {
+        if (value !== null && nextTileIds[rowIndex][colIndex] === null) {
+          tileIdCounterRef.current += 1;
+          nextTileIds[rowIndex][colIndex] = tileIdCounterRef.current;
+          spawnedId = tileIdCounterRef.current;
+        }
+      });
+    });
+    setTileIds(nextTileIds);
+    setSpawnedTileId(spawnedId);
+    if (spawnedId !== null) {
+      const newSpawnedId = spawnedId;
+      window.setTimeout(() => {
+        setSpawnedTileId((current) => current === newSpawnedId ? null : current);
+      }, 180);
+    }
+
     const oldMax = maxTile(state.grid);
     const newMax = maxTile(result.state.grid);
     if (newMax > oldMax && newMax >= 128) playBigMerge(newMax);
@@ -822,14 +906,13 @@ export default function GameBoard() {
     if (legalMoveCount(result.state.grid) <= 1 && canMove(result.state.grid)) playDanger();
 
     setHistory((prev) => [...prev.slice(-19), snapshot(state)]);
-    if (result.scoreGained > 0) {
-      const mergedIndexes = new Set<number>();
-      result.state.grid.flat().forEach((val, idx) => {
-        if (val && val >= 4) mergedIndexes.add(idx);
-      });
-      setJustMerged(mergedIndexes);
-      setTimeout(() => setJustMerged(new Set()), 320);
-      if (localStorage.getItem('hapticsOn') !== 'false' && navigator.vibrate) navigator.vibrate(12);
+    const mergedIndexes = new Set(movedTiles.mergedIndices);
+    setJustMerged(mergedIndexes);
+    window.setTimeout(() => {
+      setJustMerged((current) => current === mergedIndexes ? new Set() : current);
+    }, 190);
+    if (result.scoreGained > 0 && localStorage.getItem('hapticsOn') !== 'false' && navigator.vibrate) {
+      navigator.vibrate(12);
     }
     setCombo(result.scoreGained > 0 ? combo + 1 : 0);
     setNudge(dir);
@@ -843,11 +926,14 @@ export default function GameBoard() {
       levelUp(playerLevel + 1, result.state.score);
     }
     if (result.state.gameOver) closeRun(result.state);
-  }, [screen, state, user, combo, soundOn, playerLevel, targetScore, showLevelUp, isDaily, isPvp, isDuel, timed, timeLeft, pvpResult, mark, selectedMode]);
+  }, [screen, state, tileIds, freshTileIds, user, combo, soundOn, playerLevel, targetScore, showLevelUp, isDaily, isPvp, isDuel, timed, timeLeft, pvpResult, mark, selectedMode]);
 
   const undo = () => {
     if (history.length === 0 || state.undosLeft <= 0 || isPvp) return;
     const last = history[history.length - 1];
+    setTileIds(freshTileIds(last.grid));
+    setSpawnedTileId(null);
+    setJustMerged(new Set());
     setHistory((prev) => prev.slice(0, -1));
     setState((prev) => ({
       ...prev,
@@ -879,6 +965,23 @@ export default function GameBoard() {
     else if (tool === 'bomb') next = applyBomb(state, index);
     if (!next) return;
     playTone(320, 0.08, 0.07);
+    if (tool === 'swap' && swapFirst !== null) {
+      const swappedIds = tileIds.map((row) => [...row]);
+      const size = swappedIds.length || state.size;
+      const firstRow = Math.floor(swapFirst / size);
+      const firstCol = swapFirst % size;
+      const secondRow = Math.floor(index / size);
+      const secondCol = index % size;
+      [swappedIds[firstRow][firstCol], swappedIds[secondRow][secondCol]] = [
+        swappedIds[secondRow][secondCol],
+        swappedIds[firstRow][firstCol],
+      ];
+      setTileIds(swappedIds);
+    } else {
+      setTileIds(freshTileIds(next.grid));
+    }
+    setSpawnedTileId(null);
+    setJustMerged(new Set());
     setState(next);
     setTool(null);
     setSwapFirst(null);
@@ -1401,27 +1504,54 @@ export default function GameBoard() {
           } ${danger ? 'ring-4 ring-red-500/80' : ''} ${nudge ? `nudge-${nudge}` : ''}`}
         >
           <div
-            className="grid gap-1.5"
+            className="relative grid gap-1.5"
             style={{ gridTemplateColumns: `repeat(${state.size || 4}, minmax(0, 1fr))` }}
           >
-            {state.grid.flat().map((value, i) => {
-              const digits = value ? String(value).length : 0;
-              const big = (state.size || 4) >= 8;
-              const mid = (state.size || 4) === 6;
+            {state.grid.flat().map((_, i) => (
+              <button
+                key={`cell-${i}`}
+                type="button"
+                aria-label={`Empty board cell ${i + 1}`}
+                onClick={() => useToolOn(i)}
+                className="aspect-square w-full rounded-md sm:rounded-lg bg-[#cdc1b4]"
+              />
+            ))}
+            {state.grid.flatMap((value, i) => {
+              if (value === null) return [];
+              const size = state.size || 4;
+              const row = Math.floor(i / size);
+              const col = i % size;
+              const tileId = tileIds[row]?.[col] ?? i + 1;
+              const digits = String(value).length;
+              const big = size >= 8;
+              const mid = size === 6;
               const text = digits >= 6 ? 'text-[10px]' : digits >= 4 ? (big ? 'text-[10px]' : 'text-sm') : big ? 'text-xs' : mid ? 'text-base' : 'text-2xl';
-              return (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => useToolOn(i)}
-                  style={getTileStyle(value)}
-                  className={`aspect-square w-full rounded-md sm:rounded-lg flex items-center justify-center font-bold ${text} ${
-                    justMerged.has(i) && localStorage.getItem('animationsOn') !== 'false' ? 'animate-collapse3d' : ''
-                  } ${swapFirst === i ? 'outline outline-2 outline-white' : ''}`}
+              const gap = 6;
+              const position = `translate3d(calc(${(col * 100) / size}% + ${(col * gap) / size}px), calc(${(row * 100) / size}% + ${(row * gap) / size}px), 0)`;
+              return [
+                <div
+                  key={tileId}
+                  className={`tile-motion absolute left-0 top-0 z-10 aspect-square ${animationsOn ? '' : 'tile-motion-disabled'}`}
+                  style={{
+                    width: `calc(${100 / size}% - ${((size - 1) * gap) / size}px)`,
+                    transform: position,
+                  }}
                 >
-                  {value || ''}
-                </button>
-              );
+                  <button
+                    type="button"
+                    aria-label={`Tile ${value}`}
+                    onClick={() => useToolOn(i)}
+                    style={getTileStyle(value)}
+                    className={`tile-face flex h-full w-full items-center justify-center rounded-md sm:rounded-lg font-bold ${text} ${
+                      animationsOn && justMerged.has(i) ? 'tile-merge-pop' : ''
+                    } ${animationsOn && spawnedTileId === tileId ? 'tile-spawn' : ''} ${
+                      swapFirst === i ? 'outline outline-2 outline-white' : ''
+                    }`}
+                  >
+                    {value}
+                  </button>
+                </div>,
+              ];
             })}
           </div>
         </div>
