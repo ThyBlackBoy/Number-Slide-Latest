@@ -1532,7 +1532,7 @@ export default function GameBoard() {
                 className="aspect-square w-full rounded-md sm:rounded-lg bg-[#cdc1b4]"
               />
             ))}
-            {state.grid.flatMap((value, i) => {
+            {state.grid.flat().flatMap((value, i) => {
               if (value === null) return [];
               const size = state.size || 4;
               const row = Math.floor(i / size);
