@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties } from 'react';
 import { createClient } from '@/lib/supabase';
 import {
   GameState,
@@ -160,6 +160,8 @@ export default function GameBoard() {
   const [tileIds, setTileIds] = useState<TileIdGrid>([]);
   const [spawnedTileId, setSpawnedTileId] = useState<number | null>(null);
   const [animationsOn, setAnimationsOn] = useState(true);
+  const [tileCellSize, setTileCellSize] = useState(0);
+  const tileBoardRef = useRef<HTMLDivElement>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [user, setUser] = useState<any>(null);
   const [username, setUsername] = useState('player');
@@ -206,6 +208,19 @@ export default function GameBoard() {
     tileIdCounterRef.current += 1;
     return tileIdCounterRef.current;
   }), []);
+
+  useLayoutEffect(() => {
+    const board = tileBoardRef.current;
+    if (!board) return;
+    const measure = () => {
+      const gap = Number.parseFloat(window.getComputedStyle(board).columnGap) || 6;
+      setTileCellSize(Math.max(0, (board.clientWidth - gap * (state.size - 1)) / state.size));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(board);
+    return () => observer.disconnect();
+  }, [state.size, screen]);
 
   const targetScore = getTargetScore(playerLevel);
   const isDaily = selectedMode === 'daily';
@@ -1504,6 +1519,7 @@ export default function GameBoard() {
           } ${danger ? 'ring-4 ring-red-500/80' : ''} ${nudge ? `nudge-${nudge}` : ''}`}
         >
           <div
+            ref={tileBoardRef}
             className="relative grid gap-1.5"
             style={{ gridTemplateColumns: `repeat(${state.size || 4}, minmax(0, 1fr))` }}
           >
@@ -1527,14 +1543,16 @@ export default function GameBoard() {
               const mid = size === 6;
               const text = digits >= 6 ? 'text-[10px]' : digits >= 4 ? (big ? 'text-[10px]' : 'text-sm') : big ? 'text-xs' : mid ? 'text-base' : 'text-2xl';
               const gap = 6;
-              const position = `translate3d(calc(${(col * 100) / size}% + ${(col * gap) / size}px), calc(${(row * 100) / size}% + ${(row * gap) / size}px), 0)`;
+              const cellSize = tileCellSize;
               return [
                 <div
                   key={tileId}
-                  className={`tile-motion absolute left-0 top-0 z-10 aspect-square ${animationsOn ? '' : 'tile-motion-disabled'}`}
+                  className={`tile-motion absolute left-0 top-0 z-10 ${animationsOn ? '' : 'tile-motion-disabled'}`}
                   style={{
-                    width: `calc(${100 / size}% - ${((size - 1) * gap) / size}px)`,
-                    transform: position,
+                    width: cellSize ? `${cellSize}px` : `calc(${100 / size}% - ${((size - 1) * gap) / size}px)`,
+                    height: cellSize ? `${cellSize}px` : `calc(${100 / size}% - ${((size - 1) * gap) / size}px)`,
+                    left: cellSize ? `${col * (cellSize + gap)}px` : `calc(${(col * 100) / size}% + ${(col * gap) / size}px)`,
+                    top: cellSize ? `${row * (cellSize + gap)}px` : `calc(${(row * 100) / size}% + ${(row * gap) / size}px)`,
                   }}
                 >
                   <button
