@@ -70,13 +70,13 @@ export async function publishStanding(
   let saved = true;
 
   if (input.score > previousDaily) {
-    const patch = previousDaily > 0
-      ? await supabase.from('daily_scores').update({
+    if (previousDaily > 0) {
+      const patch = await supabase.from('daily_scores').update({
         score: input.score,
         max_tile: input.tile,
-      }).eq('user_id', input.userId).eq('challenge_date', today).lt('score', input.score).select('user_id')
-      : { error: { message: 'missing' }, data: [] as { user_id: string }[] };
-    if (patch.error || !patch.data?.length) {
+      }).eq('user_id', input.userId).eq('challenge_date', today).lt('score', input.score).select('user_id');
+      if (patch.error) saved = false;
+    } else {
       const inserted = await supabase.from('daily_scores').insert({
         user_id: input.userId,
         score: input.score,
@@ -96,14 +96,14 @@ export async function publishStanding(
       .order('score', { ascending: false })
       .limit(1);
     const todayRow = todayRows?.[0];
-    const patch = todayRow?.id
-      ? await supabase.from('scores').update({
+    if (todayRow?.id) {
+      const patch = await supabase.from('scores').update({
         score: input.score,
         max_tile: input.tile,
         mode: input.mode || 'normal',
-      }).eq('id', todayRow.id).select('id')
-      : { error: { message: 'missing' }, data: [] as { id: string }[] };
-    if (patch.error || !patch.data?.length) {
+      }).eq('id', todayRow.id).select('id');
+      if (patch.error) saved = false;
+    } else {
       const inserted = await supabase.from('scores').insert({
         user_id: input.userId,
         score: input.score,

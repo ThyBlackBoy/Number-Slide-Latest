@@ -47,31 +47,47 @@ export default function LeaderboardPage() {
       const today = lagosDate();
       const { data: auth } = await supabase.auth.getUser();
       if (!stopped) setMe(auth.user?.id || null);
-      if (tab === 'daily') {
-        setLabel(`Today ${today} · updates while people play · resets at midnight, Lagos`);
-        const since = new Date(`${today}T00:00:00+01:00`).toISOString();
-        const until = new Date(`${today}T23:59:59.999+01:00`).toISOString();
-        const [normal, daily] = await Promise.all([
-          supabase.from('scores').select('user_id, score, max_tile, mode, profiles(username, level)').gte('created_at', since).lte('created_at', until).order('score', { ascending: false }).limit(200),
-          supabase.from('daily_scores').select('user_id, score, max_tile, profiles(username, level)').eq('challenge_date', today).order('score', { ascending: false }).limit(200),
-        ]);
-        if (stopped) return;
-        if (normal.error && daily.error) setError('The leaderboard could not load. Pull to refresh.');
-        else setError('');
-        const dailyRows = (daily.data || []).map((row: any) => ({ ...row, mode: row.mode || 'today' }));
-        setScores(bestRows([...(normal.data || []), ...dailyRows]));
-      } else {
-        setLabel('All time · best score kept for each player');
-        const [normal, daily] = await Promise.all([
-          supabase.from('scores').select('user_id, score, max_tile, mode, profiles(username, level)').order('score', { ascending: false }).limit(200),
-          supabase.from('daily_scores').select('user_id, score, max_tile, profiles(username, level)').order('score', { ascending: false }).limit(200),
-        ]);
-        if (stopped) return;
-        if (normal.error && daily.error) setError('The leaderboard could not load. Pull to refresh.');
-        else setError('');
-        const dailyRows = (daily.data || []).map((row: any) => ({ ...row, mode: 'daily' }));
-        setScores(bestRows([...(normal.data || []), ...dailyRows]));
+      const since = new Date(`${today}T00:00:00+01:00`).toISOString();
+      const until = new Date(`${today}T23:59:59.999+01:00`).toISOString();
+      setLabel(tab === 'daily'
+        ? `Today ${today} · updates while people play · resets at midnight, Lagos`
+        : 'All time · best score kept for each player');
+      const [people, daily] = await Promise.all([
+        supabase.from('profiles').select('id, username, level, scores(score, max_tile, mode, created_at)').order('score', { referencedTable: 'scores', ascending: false }).limit(1, { referencedTable: 'scores' }),
+        supabase.from('daily_scores').select('user_id, score, max_tile, challenge_date'),
+      ]);
+      if (stopped) return;
+      if (people.error && daily.error) setError('The leaderboard could not load. Pull to refresh.');
+      else setError('');
+      const roster = new Map<string, { username: string; level: number }>();
+      const rows: any[] = [];
+      for (const person of people.data || []) {
+        roster.set(person.id, { username: person.username, level: person.level });
+        const best = Array.isArray(person.scores) ? person.scores[0] : null;
+        if (!best || !(Number(best.score) > 0)) continue;
+        const created = best.created_at ? new Date(best.created_at).toISOString() : '';
+        if (tab === 'alltime' || (created >= since && created <= until)) {
+          rows.push({
+            user_id: person.id,
+            score: best.score,
+            max_tile: best.max_tile,
+            mode: best.mode,
+            profiles: { username: person.username, level: person.level },
+          });
+        }
       }
+      for (const row of daily.data || []) {
+        if (tab === 'daily' && row.challenge_date !== today) continue;
+        const person = roster.get(row.user_id);
+        rows.push({
+          user_id: row.user_id,
+          score: row.score,
+          max_tile: row.max_tile,
+          mode: tab === 'daily' ? 'today' : 'daily',
+          profiles: { username: person?.username || 'Player', level: person?.level || 1 },
+        });
+      }
+      setScores(bestRows(rows));
       setLoading(false);
     };
     setLoading(true);
