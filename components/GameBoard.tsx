@@ -19,6 +19,7 @@ import {
   boardSizeFor,
 } from '@/lib/gameLogic';
 import { getTargetScore, getLevelReward, getLevelTitle } from '@/lib/levels';
+import { publishStanding, type Standing } from '@/lib/standings';
 import { Undo2, RotateCcw, Volume2, VolumeX, Calendar, Swords, Users } from 'lucide-react';
 import Link from 'next/link';
 
@@ -191,6 +192,7 @@ export default function GameBoard() {
   const [keepGoing, setKeepGoing] = useState(false);
   const [playedToday, setPlayedToday] = useState(true);
   const [throne, setThrone] = useState<{ name: string; score: number; mine: boolean; behind: number } | null>(null);
+  const [standing, setStanding] = useState<Standing | null>(null);
   const [mark, setMark] = useState<{ name: string; score: number; board: 'daily' | 'normal' } | null>(null);
   const [notifs, setNotifs] = useState<any[]>([]);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
@@ -203,6 +205,10 @@ export default function GameBoard() {
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const tileIdCounterRef = useRef(0);
   const savedRun = useRef(false);
+  const publishedScore = useRef(0);
+  const standingLock = useRef(false);
+  const pendingStanding = useRef<{ score: number; tile: number } | null>(null);
+  const toldSaveFail = useRef(false);
   const supabase = createClient();
   const freshTileIds = useCallback((grid: Grid): TileIdGrid => buildTileIdGrid(grid, () => {
     tileIdCounterRef.current += 1;
@@ -505,87 +511,76 @@ export default function GameBoard() {
 
   const saveScore = async (score: number, tile: number) => {
     if (score <= 0 || isPvp) return;
-    if (!user) {
-      showToast('Sign in so the score can be saved');
-      return;
-    }
-    if (!(isDaily || isDuel)) {
-      const { error: scoreError } = await supabase.from('scores').insert({
-        user_id: user.id,
-        score,
-        mode: selectedMode || 'normal',
-        max_tile: tile,
-      });
-      if (scoreError) showToast('Score did not save');
-    }
-    if (isDaily || isDuel) {
-      const today = lagosDate();
-      const { data: kings } = await supabase
-        .from('daily_scores')
-        .select('user_id, score, profiles(username)')
-        .eq('challenge_date', today)
-        .order('score', { ascending: false })
-        .limit(5);
-      const king: any = (kings || []).find((row: any) => row.user_id !== user.id);
-      const { data: mineRow } = await supabase
-        .from('daily_scores')
-        .select('score')
-        .eq('user_id', user.id)
-        .eq('challenge_date', today)
-        .maybeSingle();
-      if (!mineRow || score > mineRow.score) {
-        const { error: dailyError } = await supabase.from('daily_scores').upsert({
-          user_id: user.id,
-          score,
-          max_tile: tile,
-          challenge_date: today,
-        }, { onConflict: 'user_id,challenge_date' });
-        if (dailyError) showToast('Daily score did not save');
-        if (king && score > king.score) {
-          const kingName = Array.isArray(king.profiles) ? king.profiles[0]?.username : king.profiles?.username;
+    if (!user) return;
+    if (score < publishedScore.current) return;
+    pendingStanding.current = { score, tile };
+    if (standingLock.current) return;
+    standingLock.current = true;
+    try {
+      while (pendingStanding.current) {
+        const job = pendingStanding.current;
+        pendingStanding.current = null;
+        const result = await publishStanding(supabase, {
+          userId: user.id,
+          score: job.score,
+          tile: job.tile,
+          mode: selectedMode || 'normal',
+        });
+        publishedScore.current = Math.max(publishedScore.current, job.score);
+        setStanding(result.standing);
+        if (!result.saved && !toldSaveFail.current) {
+          toldSaveFail.current = true;
+          showToast('Score did not reach the leaderboard');
+        }
+        if (result.passedToday) {
           await supabase.from('notifications').insert({
-            user_id: king.user_id,
+            user_id: result.passedToday.userId,
             type: 'throne',
             title: 'Somebody pass you',
-            body: `${username} just scored ${score.toLocaleString()} and took today's top from ${kingName || 'you'}. Come take it back.`,
+            body: `${username} just scored ${job.score.toLocaleString()} and took today's top from ${result.passedToday.username || 'you'}. Come take it back.`,
             from_user_id: user.id,
           });
-          showToast('You took today\'s top');
+        }
+        if (result.passedAllTime && result.passedAllTime.userId !== result.passedToday?.userId) {
+          await supabase.from('notifications').insert({
+            user_id: result.passedAllTime.userId,
+            type: 'throne',
+            title: 'Somebody pass you',
+            body: `${username} just scored ${job.score.toLocaleString()} and took the all-time top from ${result.passedAllTime.username || 'you'}. Come take it back.`,
+            from_user_id: user.id,
+          });
+        }
+        if (isDaily || isDuel) {
+          const { count: behind } = await supabase
+            .from('daily_scores')
+            .select('*', { count: 'exact', head: true })
+            .eq('challenge_date', lagosDate())
+            .lt('score', job.score);
+          const { count: total } = await supabase
+            .from('daily_scores')
+            .select('*', { count: 'exact', head: true })
+            .eq('challenge_date', lagosDate());
+          if (total && total > 0) {
+            const percent = Math.round(((behind || 0) / total) * 100);
+            setBeatOf(percent);
+            setDailyPlace(`Beat ${percent}% today`);
+          }
         }
       }
-      const { count: behind } = await supabase
-        .from('daily_scores')
-        .select('*', { count: 'exact', head: true })
-        .eq('challenge_date', today)
-        .lt('score', score);
-      const { count: total } = await supabase
-        .from('daily_scores')
-        .select('*', { count: 'exact', head: true })
-        .eq('challenge_date', today);
-      if (total && total > 0) {
-        setBeatOf(Math.round(((behind || 0) / total) * 100));
-        setDailyPlace(`Beat ${Math.round(((behind || 0) / total) * 100)}% today`);
-      }
-    } else {
-      const { data: kings } = await supabase
-        .from('scores')
-        .select('user_id, score, profiles(username)')
-        .order('score', { ascending: false })
-        .limit(5);
-      const king: any = (kings || []).find((row: any) => row.user_id !== user.id);
-      if (king && score > king.score) {
-        const kingName = Array.isArray(king.profiles) ? king.profiles[0]?.username : king.profiles?.username;
-        await supabase.from('notifications').insert({
-          user_id: king.user_id,
-          type: 'throne',
-          title: 'Somebody pass you',
-          body: `${username} just scored ${score.toLocaleString()} and took the top from ${kingName || 'you'}. Come take it back.`,
-          from_user_id: user.id,
-        });
-        showToast('You took the top');
-      }
+    } finally {
+      standingLock.current = false;
+      const waiting = pendingStanding.current;
+      if (waiting) saveScore(waiting.score, waiting.tile);
     }
   };
+
+  useEffect(() => {
+    if (screen !== 'playing' || isPvp || state.score <= 0) return;
+    const timer = window.setTimeout(() => {
+      saveScore(state.score, maxTile(state.grid));
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [state.score, state.grid, screen, isPvp, user, selectedMode]);
 
   const levelUp = async (newLevel: number, score: number) => {
     const reward = getLevelReward(newLevel);
@@ -827,8 +822,12 @@ export default function GameBoard() {
     setTool(null);
     setSwapFirst(null);
     setDailyPlace(null);
+    setStanding(null);
     setKeepGoing(false);
     savedRun.current = false;
+    publishedScore.current = 0;
+    toldSaveFail.current = false;
+    pendingStanding.current = null;
     setTimeLeft(60);
     persistRun(mode, next);
     setScreen('playing');
@@ -844,7 +843,11 @@ export default function GameBoard() {
     setPvpResult(null);
     setShowLevelUp(false);
     setTool(null);
+    setStanding(null);
     savedRun.current = false;
+    publishedScore.current = 0;
+    toldSaveFail.current = false;
+    pendingStanding.current = null;
     setScreen('playing');
   };
 
@@ -1143,7 +1146,7 @@ export default function GameBoard() {
 
   if (screen === 'home') {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-[#f8d5c8] via-[#f4c7b8] to-[#e8b4a8] flex flex-col items-center justify-center p-6">
+      <div className="ns-stage min-h-screen flex flex-col items-center justify-center p-6">
         <div className="w-full max-w-sm">
           <div className="flex items-center justify-between mb-4">
             <Link href="/messages" className="relative bg-white/80 text-[#3d2b1f] text-sm font-semibold px-4 py-2 rounded-full shadow">
@@ -1325,7 +1328,7 @@ export default function GameBoard() {
 
   if (screen === 'pvp-lobby') {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-[#f8d5c8] via-[#f4c7b8] to-[#e8b4a8] p-5">
+      <div className="ns-stage min-h-screen p-5">
         <div className="max-w-md mx-auto">
           <button onClick={() => setScreen('home')} className="text-sm font-medium text-[#5c4334] mb-6">
             ← Back
@@ -1398,7 +1401,7 @@ export default function GameBoard() {
           : 'Make a 64 to unlock Swap';
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#f8d5c8] via-[#f4c7b8] to-[#e8b4a8]">
+    <div className="ns-stage min-h-screen">
       {toast && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-[#3d2b1f] text-white px-4 py-2 rounded-full text-sm font-semibold shadow-lg">
           {toast}
@@ -1510,11 +1513,32 @@ export default function GameBoard() {
         {!danger && bestScore > 0 && state.score >= bestScore && state.score > 0 && (
           <div className="mb-3 text-sm font-semibold text-[#4a3728]">New best</div>
         )}
+        {!isPvp && standing && (standing.todayTop || standing.allTimeTop) && (
+          <div className="mb-3 w-full max-w-md rounded-2xl bg-[#3d2b1f] px-4 py-3 text-center text-white shadow-lg">
+            <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-amber-300">Leaderboard</div>
+            <div className="mt-1 text-sm font-extrabold">
+              {standing.todayTop && standing.allTimeTop
+                ? "You're at the top of today's leaderboard and the all-time board"
+                : standing.allTimeTop
+                  ? "You're at the top of the all-time leaderboard"
+                  : "You're at the top of today's leaderboard"}
+            </div>
+          </div>
+        )}
+        {!isPvp && standing && !standing.todayTop && standing.todayPlace && (
+          <div className="mb-3 text-sm font-semibold text-[#4a3728]">
+            Today #{standing.todayPlace}
+            {standing.allTimePlace ? ` · All-time #${standing.allTimePlace}` : ''}
+          </div>
+        )}
+        {!isPvp && !user && state.score > 0 && (
+          <div className="mb-3 text-sm font-semibold text-[#4a3728]">Sign in to appear on the leaderboard</div>
+        )}
 
         <div
           onPointerDown={onPointerDown}
           onPointerUp={onPointerUp}
-          className={`bg-[#bbada0] rounded-2xl p-2 shadow-xl touch-none select-none w-full max-w-[520px] ${
+          className={`bg-[#bbada0] rounded-[1.4rem] p-2.5 shadow-[0_18px_40px_rgba(93,64,55,0.28)] touch-none select-none w-full max-w-[520px] ${
             bigMergeFlash ? 'brightness-110' : ''
           } ${danger ? 'ring-4 ring-red-500/80' : ''} ${nudge ? `nudge-${nudge}` : ''}`}
         >
@@ -1544,6 +1568,8 @@ export default function GameBoard() {
               const text = digits >= 6 ? 'text-[10px]' : digits >= 4 ? (big ? 'text-[10px]' : 'text-sm') : big ? 'text-xs' : mid ? 'text-base' : 'text-2xl';
               const gap = 6;
               const cellSize = tileCellSize;
+              const x = cellSize ? col * (cellSize + gap) : 0;
+              const y = cellSize ? row * (cellSize + gap) : 0;
               return [
                 <div
                   key={tileId}
@@ -1551,8 +1577,9 @@ export default function GameBoard() {
                   style={{
                     width: cellSize ? `${cellSize}px` : `calc(${100 / size}% - ${((size - 1) * gap) / size}px)`,
                     height: cellSize ? `${cellSize}px` : `calc(${100 / size}% - ${((size - 1) * gap) / size}px)`,
-                    left: cellSize ? `${col * (cellSize + gap)}px` : `calc(${(col * 100) / size}% + ${(col * gap) / size}px)`,
-                    top: cellSize ? `${row * (cellSize + gap)}px` : `calc(${(row * 100) / size}% + ${(row * gap) / size}px)`,
+                    transform: cellSize ? `translate3d(${x}px, ${y}px, 0)` : undefined,
+                    left: cellSize ? 0 : `calc(${(col * 100) / size}% + ${(col * gap) / size}px)`,
+                    top: cellSize ? 0 : `calc(${(row * 100) / size}% + ${(row * gap) / size}px)`,
                   }}
                 >
                   <button
