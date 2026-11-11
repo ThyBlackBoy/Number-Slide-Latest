@@ -26,8 +26,8 @@
 }
 
 .tile-motion {
-  transition: transform 240ms cubic-bezier(0.16, 0.84, 0.24, 1);
-  will-change: transform;
+  transition: transform 240ms cubic-bezier(0.16, 0.84, 0.24, 1), left 240ms cubic-bezier(0.16, 0.84, 0.24, 1), top 240ms cubic-bezier(0.16, 0.84, 0.24, 1);
+  will-change: transform, left, top;
 }
 
 .tile-face {
