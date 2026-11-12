@@ -20,7 +20,7 @@ import {
 } from '@/lib/gameLogic';
 import { getTargetScore, getLevelReward, getLevelTitle } from '@/lib/levels';
 import { publishStanding, type Standing } from '@/lib/standings';
-import { Undo2, RotateCcw, Volume2, VolumeX, Calendar, Swords, Users } from 'lucide-react';
+import { Undo2, RotateCcw, Volume2, VolumeX, Calendar, Swords, Users, MessageCircle } from 'lucide-react';
 import Link from 'next/link';
 
 interface HistoryItem {
@@ -171,6 +171,7 @@ export default function GameBoard() {
   const [justMerged, setJustMerged] = useState<Set<number>>(new Set());
   const [bigMergeFlash, setBigMergeFlash] = useState(false);
   const [playerLevel, setPlayerLevel] = useState(1);
+  const [confirmRestart, setConfirmRestart] = useState(false);
   const [showLevelUp, setShowLevelUp] = useState(false);
   const [levelRewardText, setLevelRewardText] = useState('');
   const [match, setMatch] = useState<any>(null);
@@ -209,6 +210,9 @@ export default function GameBoard() {
   const standingLock = useRef(false);
   const pendingStanding = useRef<{ score: number; tile: number } | null>(null);
   const toldSaveFail = useRef(false);
+  const levelReady = useRef(false);
+  const playerLevelRef = useRef(1);
+  const leveling = useRef(false);
   const supabase = createClient();
   const freshTileIds = useCallback((grid: Grid): TileIdGrid => buildTileIdGrid(grid, () => {
     tileIdCounterRef.current += 1;
@@ -336,14 +340,33 @@ export default function GameBoard() {
       });
     }
 
+    const loadProfileLevel = async (userId: string) => {
+      const [{ data }, { data: progress }] = await Promise.all([
+        supabase.from('profiles').select('level, highest_level, username').eq('id', userId).single(),
+        supabase.from('level_progress').select('level').eq('user_id', userId).order('level', { ascending: false }).limit(1),
+      ]);
+      if (!data && !progress?.length) return;
+      const stored = Math.max(data?.level || 1, data?.highest_level || 1);
+      const reached = Math.max(stored, progress?.[0]?.level || 1);
+      if (data && reached > (data.level || 1)) {
+        await supabase.from('profiles').update({
+          level: reached,
+          highest_level: Math.max(reached, data.highest_level || 1),
+        }).eq('id', userId).lte('level', stored);
+      }
+      if (!levelReady.current || reached > playerLevelRef.current) {
+        playerLevelRef.current = Math.max(levelReady.current ? playerLevelRef.current : 1, reached);
+        setPlayerLevel(playerLevelRef.current);
+      }
+      if (data?.username) setUsername(data.username);
+      levelReady.current = true;
+    };
+
     const loadUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
-      if (user) {
-        const { data } = await supabase.from('profiles').select('level, username').eq('id', user.id).single();
-        if (data?.level) setPlayerLevel(data.level);
-        if (data?.username) setUsername(data.username);
-      }
+      if (user) await loadProfileLevel(user.id);
+      else levelReady.current = true;
     };
     loadUser();
 
@@ -380,6 +403,8 @@ export default function GameBoard() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
       setUser(session?.user ?? null);
+      if (session?.user) loadProfileLevel(session.user.id);
+      else levelReady.current = true;
     });
     return () => subscription.unsubscribe();
   }, [supabase]);
@@ -583,7 +608,12 @@ export default function GameBoard() {
   }, [state.score, state.grid, screen, isPvp, user, selectedMode]);
 
   const levelUp = async (newLevel: number, score: number) => {
+    if (!levelReady.current || newLevel <= playerLevelRef.current) {
+      leveling.current = false;
+      return;
+    }
     const reward = getLevelReward(newLevel);
+    playerLevelRef.current = newLevel;
     setPlayerLevel(newLevel);
     setLevelRewardText(reward.label);
     setState((current) => ({
@@ -596,7 +626,10 @@ export default function GameBoard() {
     setShowLevelUp(true);
     playTone(660, 0.15);
     if (user) {
-      await supabase.from('profiles').update({ level: newLevel, highest_level: newLevel }).eq('id', user.id);
+      await supabase.from('profiles').update({
+        level: newLevel,
+        highest_level: newLevel,
+      }).eq('id', user.id).or(`highest_level.lt.${newLevel},highest_level.is.null`);
       await supabase.from('level_progress').upsert({ user_id: user.id, level: newLevel - 1, score });
     }
   };
@@ -940,8 +973,17 @@ export default function GameBoard() {
     setTool(null);
     setSwapFirst(null);
 
-    if (!isDaily && !isPvp && !isDuel && result.state.score >= targetScore && !showLevelUp) {
-      levelUp(playerLevel + 1, result.state.score);
+    if (
+      levelReady.current
+      && !leveling.current
+      && !isDaily
+      && !isPvp
+      && !isDuel
+      && result.state.score >= getTargetScore(playerLevelRef.current)
+      && !showLevelUp
+    ) {
+      leveling.current = true;
+      levelUp(playerLevelRef.current + 1, result.state.score);
     }
     if (result.state.gameOver) closeRun(result.state);
   }, [screen, state, tileIds, freshTileIds, user, combo, soundOn, playerLevel, targetScore, showLevelUp, isDaily, isPvp, isDuel, timed, timeLeft, pvpResult, mark, selectedMode]);
@@ -1006,7 +1048,12 @@ export default function GameBoard() {
     if (next.gameOver) closeRun(next);
   };
 
+  const askRestart = () => {
+    setConfirmRestart(true);
+  };
+
   const restart = () => {
+    setConfirmRestart(false);
     if (isPvp) {
       setScreen('pvp-lobby');
       setMatch(null);
@@ -1149,7 +1196,8 @@ export default function GameBoard() {
       <div className="ns-stage min-h-screen flex flex-col items-center justify-center p-6">
         <div className="w-full max-w-sm">
           <div className="flex items-center justify-between mb-4">
-            <Link href="/messages" className="relative bg-white/80 text-[#3d2b1f] text-sm font-semibold px-4 py-2 rounded-full shadow">
+            <Link href="/messages" aria-label={unreadChatCount > 0 ? `Chat, ${unreadChatCount} unread` : 'Chat'} className="relative inline-flex min-h-11 items-center gap-2 bg-white/80 text-[#3d2b1f] text-sm font-semibold px-4 py-2 rounded-full shadow">
+              <MessageCircle size={16} />
               Chat
               {unreadChatCount > 0 && (
                 <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
@@ -1495,7 +1543,9 @@ export default function GameBoard() {
             </div>
           )}
           <button
-            onClick={restart}
+            type="button"
+            onClick={askRestart}
+            aria-label="Restart game"
             className="w-12 h-12 rounded-full bg-white shadow-md flex items-center justify-center text-[#4a3728] active:scale-95 transition"
           >
             <RotateCcw size={18} />
@@ -1644,6 +1694,27 @@ export default function GameBoard() {
           </button>
         )}
 
+        {confirmRestart && (
+          <div
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-6 z-50"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="restart-title"
+            onKeyDown={(e) => { if (e.key === 'Escape') setConfirmRestart(false); }}
+          >
+            <div className="bg-white rounded-3xl p-8 text-center max-w-xs w-full shadow-2xl">
+              <h2 id="restart-title" className="text-2xl font-extrabold text-[#3d2b1f]">Do you want to restart?</h2>
+              <p className="text-sm text-[#6b5344] mt-2">This board will start over.</p>
+              <button type="button" onClick={restart} className="w-full mt-5 bg-[#4a3728] text-white py-3.5 rounded-2xl font-semibold">
+                Restart
+              </button>
+              <button type="button" autoFocus onClick={() => setConfirmRestart(false)} className="w-full mt-2 bg-[#f6eee8] text-[#3d2b1f] py-3.5 rounded-2xl font-semibold">
+                Keep playing
+              </button>
+            </div>
+          </div>
+        )}
+
         {(pvpResult || (state.gameOver && !showLevelUp)) && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-6 z-50">
             <div className="bg-white rounded-3xl p-8 text-center max-w-xs w-full shadow-2xl">
@@ -1683,7 +1754,7 @@ export default function GameBoard() {
               <div className="text-sm text-[#8a6f5c] mb-2">{getLevelTitle(playerLevel)}</div>
               <div className="text-sm font-bold text-amber-700 mb-6">Reward: {levelRewardText}</div>
               <button
-                onClick={() => setShowLevelUp(false)}
+                onClick={() => { leveling.current = false; setShowLevelUp(false); }}
                 className="w-full bg-[#4a3728] text-white py-3.5 rounded-2xl font-semibold"
               >
                 Continue

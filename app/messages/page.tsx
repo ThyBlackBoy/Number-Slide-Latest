@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, Suspense } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Send, X, Swords, Trophy, Sparkles } from 'lucide-react';
+import { Send, ChevronLeft, Swords, Trophy, Sparkles } from 'lucide-react';
 
 type Person = { id: string; username: string };
 type Row = { other: Person; last?: { content: string; created_at: string; sender_id: string } };
@@ -143,6 +143,14 @@ function MessagesPage() {
     }
   };
 
+  const previewOf = (content?: string) => {
+    if (!content) return 'No messages yet';
+    if (content.startsWith('[INVITE:')) return 'Match challenge';
+    return content;
+  };
+
+  const clock = (value: string) => new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
   const sendMatchInvite = async () => {
     setShowInviteModal(false);
     const inviteText = `[INVITE:${targetGoal}] ⚔️ Challenge: First to reach ${targetGoal.toLocaleString()} points wins!`;
@@ -151,7 +159,7 @@ function MessagesPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#f8d5c8] to-[#e8b4a8] text-[#6b5344]">
+      <div className="min-h-screen flex items-center justify-center bg-[#f6efe8] text-[#6b5344]">
         Loading messages…
       </div>
     );
@@ -159,44 +167,48 @@ function MessagesPage() {
 
   if (open) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-[#f8d5c8] to-[#e8b4a8] flex flex-col">
-        {/* Header */}
-        <div className="bg-white/90 backdrop-blur px-4 py-3 flex items-center justify-between shadow border-b border-white/40">
-          <div className="flex items-center gap-3">
+      <div className="min-h-screen bg-[#f3e7df] flex flex-col">
+        <div className="sticky top-0 z-20 bg-[#fffaf7]/95 backdrop-blur px-3 py-2.5 flex items-center justify-between border-b border-[#eadfd6]">
+          <div className="flex items-center gap-2 min-w-0">
             <button
+              type="button"
+              aria-label="Back to messages"
               onClick={() => {
                 setOpen(null);
                 if (user) loadInbox(user.id);
                 router.replace('/messages');
               }}
-              className="text-[#4a3728]"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-full text-[#3d2b1f]"
             >
-              <X size={22} />
+              <ChevronLeft size={22} />
             </button>
-            <div>
-              <div className="font-bold text-[#3d2b1f] flex items-center gap-1.5">
+            <div className="w-10 h-10 rounded-full bg-[#3d2b1f] text-white flex items-center justify-center font-bold shrink-0">
+              {(open.username || 'P').slice(0, 1).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <div className="font-bold text-[#3d2b1f] flex items-center gap-1.5 truncate">
                 {open.username}
-                <Sparkles size={14} className="text-amber-500" />
+                <Sparkles size={14} className="text-amber-500 shrink-0" />
               </div>
-              <div className="text-[11px] text-[#a08070]">Friend</div>
+              <div className="text-[11px] text-[#8a6f5c]">Friend</div>
             </div>
           </div>
 
           <button
+            type="button"
             onClick={() => setShowInviteModal(true)}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-rose-500 to-orange-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow active:scale-95 transition"
+            className="min-h-11 inline-flex items-center gap-1.5 bg-[#3d2b1f] text-white text-xs font-bold px-3 rounded-full"
           >
-            <Swords size={14} /> Invite to Match
+            <Swords size={14} /> Challenge
           </button>
         </div>
 
-        {/* Message Stream */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto scroll-smooth px-4 py-4 space-y-3">
           {messages.length === 0 && (
-            <div className="text-center mt-12 bg-white/40 backdrop-blur rounded-2xl p-6 max-w-xs mx-auto text-[#8a6f5c]">
+            <div className="text-center mt-12 bg-white rounded-3xl p-6 max-w-xs mx-auto text-[#8a6f5c] shadow-sm">
               <Trophy size={32} className="mx-auto mb-2 text-amber-500" />
               <p className="font-semibold text-[#3d2b1f]">No messages yet</p>
-              <p className="text-xs mt-1">Send a greeting or challenge them to a match!</p>
+              <p className="text-sm mt-1">Say hello, or send a match challenge.</p>
             </div>
           )}
 
@@ -213,31 +225,31 @@ function MessagesPage() {
             return (
               <div key={m.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                 {isInvite ? (
-                  <div className="bg-gradient-to-br from-indigo-900 to-slate-800 text-white p-4 rounded-2xl max-w-[80%] shadow-lg border border-indigo-400/30">
+                  <div className="bg-[#3d2b1f] text-white p-4 rounded-3xl max-w-[82%] shadow-lg">
                     <div className="flex items-center gap-2 font-bold text-amber-300 text-sm mb-1">
-                      <Swords size={16} /> MATCH CHALLENGE
+                      <Swords size={16} /> Match challenge
                     </div>
-                    <div className="text-sm font-extrabold mb-2">
-                      Goal: First to {inviteTarget.toLocaleString()} pts
+                    <div className="text-sm font-extrabold mb-3">
+                      First to {inviteTarget.toLocaleString()} points
                     </div>
                     <Link
                       href={`/?beat=${inviteTarget}&from=${encodeURIComponent(profile?.username || 'Friend')}`}
-                      className="block text-center bg-gradient-to-r from-amber-400 to-orange-400 text-slate-900 text-xs font-extrabold py-2 px-4 rounded-xl shadow active:scale-95 transition"
+                      className="block text-center bg-amber-300 text-[#3d2b1f] text-sm font-extrabold py-3 px-4 rounded-2xl"
                     >
-                      Accept & Play
+                      Accept and play
                     </Link>
                   </div>
                 ) : (
                   <div
-                    className={`max-w-[75%] px-4 py-2.5 rounded-2xl text-sm shadow-sm ${
+                    className={`max-w-[78%] px-4 py-2.5 rounded-3xl text-[15px] leading-relaxed shadow-sm ${
                       isMe
-                        ? 'bg-[#3d2b1f] text-white rounded-br-none'
-                        : 'bg-white text-[#3d2b1f] rounded-bl-none'
+                        ? 'bg-[#3d2b1f] text-white rounded-br-md'
+                        : 'bg-white text-[#3d2b1f] rounded-bl-md'
                     }`}
                   >
                     <div>{m.content}</div>
-                    <div className={`text-[9px] mt-1 text-right ${isMe ? 'text-white/60' : 'text-[#b08978]'}`}>
-                      {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    <div className={`text-[11px] mt-1 text-right ${isMe ? 'text-white/70' : 'text-[#a08070]'}`}>
+                      {clock(m.created_at)}
                     </div>
                   </div>
                 )}
@@ -247,34 +259,43 @@ function MessagesPage() {
           <div ref={endRef} />
         </div>
 
-        {/* Emoji Reactions */}
-        <div className="px-3 py-1.5 bg-white/60 backdrop-blur flex items-center justify-around text-lg border-t border-white/40">
-          {['🔥', '⚔️', '👑', '👏', '😂', '🎯'].map((emoji) => (
-            <button
-              key={emoji}
-              onClick={() => send(emoji)}
-              className="hover:scale-125 transition-transform"
-            >
-              {emoji}
-            </button>
-          ))}
-        </div>
-
-        {/* Input Bar */}
-        <div className="p-3 bg-white/90 backdrop-blur flex gap-2 border-t border-white/50">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && send()}
-            placeholder="Type a message..."
-            className="flex-1 px-4 py-2.5 rounded-full border border-[#eadfd6] outline-none text-sm bg-white"
-          />
-          <button
-            onClick={() => send()}
-            className="w-11 h-11 rounded-full bg-[#3d2b1f] text-white flex items-center justify-center shadow"
+        <div className="sticky bottom-0 bg-[#fffaf7]/95 backdrop-blur border-t border-[#eadfd6] pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className="px-3 pt-2 flex items-center justify-between gap-1">
+            {['🔥', '⚔️', '👑', '👏', '😂', '🎯'].map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                aria-label={`Send ${emoji}`}
+                onClick={() => send(emoji)}
+                className="min-h-11 min-w-11 text-xl rounded-full hover:bg-white"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+          <form
+            className="px-3 pb-3 flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              send();
+            }}
           >
-            <Send size={18} />
-          </button>
+            <label className="sr-only" htmlFor="chat-message">Message</label>
+            <input
+              id="chat-message"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Type a message"
+              className="flex-1 min-h-12 px-4 rounded-full border border-[#eadfd6] outline-none text-base bg-white"
+            />
+            <button
+              type="submit"
+              aria-label="Send message"
+              className="min-w-12 min-h-12 rounded-full bg-[#3d2b1f] text-white flex items-center justify-center shadow"
+            >
+              <Send size={18} />
+            </button>
+          </form>
         </div>
 
         {/* Challenge Modal */}
@@ -323,16 +344,17 @@ function MessagesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#f8d5c8] via-[#f4c7b8] to-[#e8b4a8] px-4 py-6">
+    <div className="min-h-screen bg-[#f3e7df] px-4 py-6">
       <div className="max-w-md mx-auto">
-        <Link href="/" className="text-sm font-semibold text-[#3d2b1f]">← Back to Game</Link>
-        <h1 className="mt-6 text-3xl font-extrabold text-[#3d2b1f]">Messages</h1>
+        <Link href="/" className="inline-flex min-h-11 items-center text-sm font-semibold text-[#3d2b1f]">← Back to game</Link>
+        <h1 className="mt-4 text-3xl font-extrabold text-[#3d2b1f]">Messages</h1>
+        <p className="mt-1 text-sm text-[#6b5344]">Chats with friends, in one place.</p>
 
-        <div className="mt-6 bg-white rounded-[28px] shadow-xl overflow-hidden">
+        <div className="mt-5 bg-white rounded-[28px] shadow-sm overflow-hidden border border-white">
           {rows.length === 0 ? (
             <div className="p-8 text-center">
-              <p className="text-sm text-[#8a6f5c]">No friends yet.</p>
-              <Link href="/friends" className="inline-block mt-3 text-sm font-semibold text-[#3d2b1f] underline">
+              <p className="text-sm text-[#8a6f5c]">No chats yet.</p>
+              <Link href="/friends" className="inline-flex min-h-11 items-center mt-2 text-sm font-semibold text-[#3d2b1f] underline">
                 Add a friend
               </Link>
             </div>
@@ -340,21 +362,23 @@ function MessagesPage() {
             rows.map((row) => (
               <button
                 key={row.other.id}
+                type="button"
                 onClick={() => {
                   setOpen(row.other);
                   if (user) loadThread(user.id, row.other);
                 }}
-                className="w-full flex items-center gap-3 px-5 py-4 border-b border-[#f4ebe4] last:border-0 text-left"
+                className="w-full flex items-center gap-3 px-4 py-3.5 border-b border-[#f4ebe4] last:border-0 text-left min-h-[72px]"
               >
-                <div className="w-11 h-11 rounded-full bg-gradient-to-br from-orange-400 to-rose-400 flex items-center justify-center font-extrabold text-white shrink-0 shadow-sm">
+                <div className="w-12 h-12 rounded-full bg-[#3d2b1f] flex items-center justify-center font-extrabold text-white shrink-0">
                   {(row.other.username || 'P').slice(0, 1).toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold text-[#3d2b1f] truncate">{row.other.username}</span>
+                    {row.last && <span className="text-[11px] text-[#a08070] shrink-0">{clock(row.last.created_at)}</span>}
                   </div>
-                  <div className="text-sm text-[#8a6f5c] truncate">
-                    {row.last ? row.last.content : 'No messages yet'}
+                  <div className="text-sm text-[#6b5344] truncate mt-0.5">
+                    {previewOf(row.last?.content)}
                   </div>
                 </div>
               </button>

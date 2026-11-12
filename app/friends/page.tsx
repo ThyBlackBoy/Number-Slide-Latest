@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { createClient } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { UserPlus, MessageCircle, Send, Users, X, Search } from 'lucide-react';
+import { UserPlus, MessageCircle, Send, Users, ChevronLeft, Search } from 'lucide-react';
 
 export default function FriendsPage() {
   const [user, setUser] = useState<any>(null);
@@ -207,55 +207,74 @@ export default function FriendsPage() {
   }
 
   if (chatFriend) {
+    const name = chatFriend.other?.username || 'Friend';
     return (
-      <div className="min-h-screen bg-gradient-to-b from-[#f8d5c8] to-[#e8b4a8] flex flex-col">
-        <div className="bg-white/90 backdrop-blur px-4 py-3 flex items-center gap-3 shadow">
-          <button onClick={() => setChatFriend(null)} className="text-[#4a3728]">
-            <X size={22} />
+      <div className="min-h-screen bg-[#f3e7df] flex flex-col">
+        <div className="sticky top-0 z-20 bg-[#fffaf7]/95 backdrop-blur px-3 py-2.5 flex items-center gap-2 border-b border-[#eadfd6]">
+          <button type="button" aria-label="Back to friends" onClick={() => setChatFriend(null)} className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-full text-[#3d2b1f]">
+            <ChevronLeft size={22} />
           </button>
-          <div className="font-bold text-[#4a3728]">
-            {chatFriend.other?.username || 'Friend'}
+          <div className="w-10 h-10 rounded-full bg-[#3d2b1f] text-white flex items-center justify-center font-bold shrink-0">
+            {name.slice(0, 1).toUpperCase()}
           </div>
+          <div className="min-w-0 flex-1">
+            <div className="font-bold text-[#3d2b1f] truncate">{name}</div>
+            <div className="text-[11px] text-[#8a6f5c]">Friend</div>
+          </div>
+          <Link href={`/messages?with=${chatFriend.other.id}`} className="min-h-11 inline-flex items-center px-3 text-sm font-semibold text-[#3d2b1f]">
+            Open
+          </Link>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        <div className="flex-1 overflow-y-auto scroll-smooth p-4 space-y-3">
           {messages.length === 0 && (
-            <p className="text-center text-sm text-[#8a6f5c] mt-8">No messages yet. Say something.</p>
+            <p className="text-center text-sm text-[#8a6f5c] mt-10">No messages yet. Say something.</p>
           )}
-          {messages.map((m) => (
-            <div
-              key={m.id}
-              className={`flex ${m.sender_id === user.id ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={`max-w-[75%] px-4 py-2 rounded-2xl text-sm ${
-                  m.sender_id === user.id
-                    ? 'bg-[#4a3728] text-white rounded-br-md'
-                    : 'bg-white text-[#4a3728] rounded-bl-md shadow'
-                }`}
-              >
-                {m.content}
+          {messages.map((m) => {
+            const mine = m.sender_id === user.id;
+            return (
+              <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`max-w-[78%] px-4 py-2.5 rounded-3xl text-[15px] leading-relaxed ${
+                    mine
+                      ? 'bg-[#3d2b1f] text-white rounded-br-md'
+                      : 'bg-white text-[#3d2b1f] rounded-bl-md shadow-sm'
+                  }`}
+                >
+                  <div>{m.content}</div>
+                  <div className={`text-[11px] mt-1 text-right ${mine ? 'text-white/70' : 'text-[#a08070]'}`}>
+                    {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           <div ref={chatEndRef} />
         </div>
 
-        <div className="p-3 bg-white/90 flex gap-2">
+        <form
+          className="sticky bottom-0 bg-[#fffaf7]/95 backdrop-blur border-t border-[#eadfd6] p-3 flex gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+          onSubmit={(e) => {
+            e.preventDefault();
+            sendMessage();
+          }}
+        >
+          <label className="sr-only" htmlFor="friend-message">Message</label>
           <input
+            id="friend-message"
             value={newMsg}
             onChange={(e) => setNewMsg(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            placeholder="Type a message..."
-            className="flex-1 px-4 py-2.5 rounded-full border border-gray-200 outline-none text-sm"
+            placeholder="Type a message"
+            className="flex-1 min-h-12 px-4 rounded-full border border-[#eadfd6] outline-none text-base bg-white"
           />
           <button
-            onClick={sendMessage}
-            className="w-11 h-11 rounded-full bg-[#4a3728] text-white flex items-center justify-center"
+            type="submit"
+            aria-label="Send message"
+            className="min-w-12 min-h-12 rounded-full bg-[#3d2b1f] text-white flex items-center justify-center"
           >
             <Send size={18} />
           </button>
-        </div>
+        </form>
       </div>
     );
   }
