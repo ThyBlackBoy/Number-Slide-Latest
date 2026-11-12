@@ -207,6 +207,7 @@ export default function GameBoard() {
   const tileIdCounterRef = useRef(0);
   const savedRun = useRef(false);
   const publishedScore = useRef(0);
+  const cloudRunTimer = useRef<number | null>(null);
   const standingLock = useRef(false);
   const pendingStanding = useRef<{ score: number; tile: number } | null>(null);
   const toldSaveFail = useRef(false);
@@ -319,13 +320,31 @@ export default function GameBoard() {
     setPlayedToday(localStorage.getItem('ns_daily_date') === lagosDate());
     const best = Number(localStorage.getItem('ns_best') || 0);
     if (best) setBestScore(best);
-    try {
-      const raw = localStorage.getItem('ns_active_run');
-      if (raw) {
+    const readLocalRun = () => {
+      try {
+        const raw = localStorage.getItem('ns_active_run');
+        if (!raw) return null;
         const saved = JSON.parse(raw) as { mode: Mode; state: GameState };
-        if (saved?.state?.grid && !saved.state.gameOver) setPausedRun(saved);
-      }
-    } catch { /* ignore broken save */ }
+        if (saved?.state?.grid && !saved.state.gameOver) return saved;
+      } catch { /* ignore broken save */ }
+      return null;
+    };
+    const localRun = readLocalRun();
+    if (localRun && localRun.state.score > 0) setPausedRun(localRun);
+
+    const adoptAccountRun = async (userId: string) => {
+      const { data: run } = await supabase
+        .from('saved_runs')
+        .select('mode, state, score')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (!run?.state?.grid || run.state.gameOver || !(run.score > 0)) return;
+      const onDevice = readLocalRun();
+      if (onDevice && (onDevice.state.score || 0) > 0) return;
+      const pack = { mode: run.mode as Mode, state: run.state as GameState };
+      localStorage.setItem('ns_active_run', JSON.stringify(pack));
+      setPausedRun(pack);
+    };
 
     const params = new URLSearchParams(window.location.search);
     const beat = Number(params.get('beat') || 0);
@@ -365,8 +384,10 @@ export default function GameBoard() {
     const loadUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
-      if (user) await loadProfileLevel(user.id);
-      else levelReady.current = true;
+      if (user) {
+        await loadProfileLevel(user.id);
+        await adoptAccountRun(user.id);
+      } else levelReady.current = true;
     };
     loadUser();
 
@@ -403,8 +424,10 @@ export default function GameBoard() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
       setUser(session?.user ?? null);
-      if (session?.user) loadProfileLevel(session.user.id);
-      else levelReady.current = true;
+      if (session?.user) {
+        loadProfileLevel(session.user.id);
+        adoptAccountRun(session.user.id);
+      } else levelReady.current = true;
     });
     return () => subscription.unsubscribe();
   }, [supabase]);
@@ -646,14 +669,52 @@ export default function GameBoard() {
   });
 
   const persistRun = (mode: Mode | null, next: GameState) => {
-    if (!mode || mode === 'pvp' || next.gameOver) {
-      localStorage.removeItem('ns_active_run');
-      setPausedRun(null);
+    if (!mode || mode === 'pvp') return;
+    if (next.gameOver) {
+      let keepSaved = false;
+      try {
+        const raw = localStorage.getItem('ns_active_run');
+        if (raw) {
+          const previous = JSON.parse(raw) as { mode: Mode; state: GameState };
+          keepSaved = previous.mode !== mode && (previous.state?.score || 0) > next.score;
+        }
+      } catch { /* replace a broken save */ }
+      if (!keepSaved) {
+        localStorage.removeItem('ns_active_run');
+        setPausedRun(null);
+        if (user && next.score > 0) {
+          supabase.from('saved_runs').delete().eq('user_id', user.id).eq('mode', mode).lte('score', next.score);
+        }
+      }
       return;
     }
+    if ((next.score || 0) <= 0) return;
+    try {
+      const raw = localStorage.getItem('ns_active_run');
+      if (raw) {
+        const previous = JSON.parse(raw) as { mode: Mode; state: GameState };
+        if (previous?.state?.score > next.score && previous.mode !== mode) return;
+      }
+    } catch { /* ignore broken save */ }
     const pack = { mode, state: next };
     localStorage.setItem('ns_active_run', JSON.stringify(pack));
     setPausedRun(pack);
+    if (!user) return;
+    if (cloudRunTimer.current) window.clearTimeout(cloudRunTimer.current);
+    const snapshot = next;
+    const snapshotMode = mode;
+    const userId = user.id;
+    cloudRunTimer.current = window.setTimeout(async () => {
+      const { data: existing } = await supabase.from('saved_runs').select('score').eq('user_id', userId).maybeSingle();
+      if (existing && existing.score > snapshot.score) return;
+      await supabase.from('saved_runs').upsert({
+        user_id: userId,
+        mode: snapshotMode,
+        state: snapshot,
+        score: snapshot.score,
+        updated_at: new Date().toISOString(),
+      });
+    }, 800);
   };
 
   const loadOpenMatches = async () => {
@@ -862,7 +923,6 @@ export default function GameBoard() {
     toldSaveFail.current = false;
     pendingStanding.current = null;
     setTimeLeft(60);
-    persistRun(mode, next);
     setScreen('playing');
   };
 
@@ -1324,13 +1384,15 @@ export default function GameBoard() {
               <span className="text-3xl group-hover:scale-110 transition">⚔️</span>
             </button>
 
-            {pausedRun && (
+            {pausedRun && pausedRun.state.score > 0 && (
               <button
                 onClick={continueRun}
                 className="w-full bg-white text-[#3d2b1f] p-4 rounded-2xl text-left shadow-md"
               >
                 <div className="font-bold">Continue your game</div>
-                <div className="text-sm text-[#6b5344]">{pausedRun.state.score.toLocaleString()} · {pausedRun.mode}</div>
+                <div className="text-sm text-[#6b5344]">
+                  {pausedRun.state.score.toLocaleString()} · {pausedRun.mode.charAt(0).toUpperCase() + pausedRun.mode.slice(1)}
+                </div>
               </button>
             )}
             <button
