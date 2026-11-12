@@ -30,7 +30,7 @@ function MessagesPage() {
       .from('friendships')
       .select('*')
       .or(`user_id.eq.${userId},friend_id.eq.${userId}`)
-      .eq('status', 'accepted');
+      .neq('status', 'rejected');
 
     const people = new Map<string, Person>();
     (links || []).forEach((f: any) => {

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import Link from 'next/link';
-import { Trophy, Calendar, Crown } from 'lucide-react';
+import { Trophy, Calendar, Crown, UserPlus } from 'lucide-react';
 
 type Tab = 'daily' | 'alltime';
 
@@ -39,14 +39,47 @@ export default function LeaderboardPage() {
   const [label, setLabel] = useState('');
   const [error, setError] = useState('');
   const [me, setMe] = useState<string | null>(null);
+  const [myName, setMyName] = useState('Someone');
+  const [links, setLinks] = useState<Record<string, { id: string; status: 'friends' | 'sent' | 'incoming' }>>({});
+  const [adding, setAdding] = useState<string | null>(null);
+  const [note, setNote] = useState('');
   const supabase = createClient();
+
+  const loadLinks = async (userId: string) => {
+    const { data, error } = await supabase
+      .from('friendships')
+      .select('id, user_id, friend_id, status')
+      .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
+    if (error || !data) return;
+    const next: Record<string, { id: string; status: 'friends' | 'sent' | 'incoming' }> = {};
+    (data || []).forEach((row: any) => {
+      const otherId = row.user_id === userId ? row.friend_id : row.user_id;
+      if (!otherId || row.status === 'rejected') return;
+      const status = row.status === 'accepted'
+        ? 'friends'
+        : row.user_id === userId
+          ? 'sent'
+          : 'incoming';
+      const current = next[otherId];
+      if (!current || status === 'friends' || (status === 'incoming' && current.status === 'sent')) {
+        next[otherId] = { id: row.id, status };
+      }
+    });
+    setLinks(next);
+  };
 
   useEffect(() => {
     let stopped = false;
     const load = async () => {
       const today = lagosDate();
       const { data: auth } = await supabase.auth.getUser();
-      if (!stopped) setMe(auth.user?.id || null);
+      const userId = auth.user?.id || null;
+      if (!stopped) setMe(userId);
+      if (userId) {
+        const { data: profile } = await supabase.from('profiles').select('username').eq('id', userId).single();
+        if (!stopped && profile?.username) setMyName(profile.username);
+        await loadLinks(userId);
+      }
       const since = new Date(`${today}T00:00:00+01:00`).toISOString();
       const until = new Date(`${today}T23:59:59.999+01:00`).toISOString();
       setLabel(tab === 'daily'
@@ -102,6 +135,50 @@ export default function LeaderboardPage() {
     };
   }, [tab, supabase]);
 
+  const addPlayer = async (row: any) => {
+    if (!me || !row.user_id || row.user_id === me) return;
+    const existing = links[row.user_id];
+    if (existing?.status === 'friends' || existing?.status === 'sent') return;
+    setAdding(row.user_id);
+    setNote('');
+    if (existing?.status === 'incoming') {
+      const { error } = await supabase.from('friendships').update({ status: 'accepted' }).eq('id', existing.id);
+      if (error) setNote('Could not add them yet.');
+      else {
+        await supabase.from('notifications').insert({
+          user_id: row.user_id,
+          type: 'friend_accepted',
+          title: 'Friend Request Accepted',
+          body: `${myName} accepted your friend request`,
+          from_user_id: me,
+        });
+        setLinks((prev) => ({ ...prev, [row.user_id]: { id: existing.id, status: 'friends' } }));
+        setNote(`You and ${nameOf(row)} are friends.`);
+      }
+      setAdding(null);
+      return;
+    }
+    const { data, error } = await supabase
+      .from('friendships')
+      .insert({ user_id: me, friend_id: row.user_id, status: 'pending' })
+      .select('id')
+      .single();
+    if (error) {
+      setNote(error.message.includes('unique') ? 'Request already sent.' : 'Could not send the request.');
+    } else {
+      await supabase.from('notifications').insert({
+        user_id: row.user_id,
+        type: 'friend_request',
+        title: 'New Friend Request',
+        body: `${myName} sent you a friend request`,
+        from_user_id: me,
+      });
+      setLinks((prev) => ({ ...prev, [row.user_id]: { id: data?.id || '', status: 'sent' } }));
+      setNote(`Request sent to ${nameOf(row)}. You can message them from Friends.`);
+    }
+    setAdding(null);
+  };
+
   const tabs = [
     { id: 'daily' as Tab, label: 'Daily Top', icon: Calendar },
     { id: 'alltime' as Tab, label: 'All-Time', icon: Crown },
@@ -119,7 +196,13 @@ export default function LeaderboardPage() {
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live
           </span>
         </div>
-        <p className="text-sm text-[#6b5344] mb-5">{label}</p>
+        <p className={`text-sm text-[#6b5344] ${!me || note ? 'mb-2' : 'mb-5'}`}>{label}</p>
+        {!me && (
+          <p className="text-sm text-[#6b5344] mb-4">
+            <Link href="/auth/login" className="font-semibold underline">Sign in</Link> to add players from this board.
+          </p>
+        )}
+        {note && <p className="text-sm font-semibold text-[#3d2b1f] mb-4">{note}</p>}
         <div className="flex bg-white/75 rounded-full p-1 mb-6 shadow">
           {tabs.map((t) => (
             <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-full text-sm font-semibold transition ${tab === t.id ? 'bg-[#4a3728] text-white shadow' : 'text-[#4a3728]'}`}>
@@ -151,6 +234,25 @@ export default function LeaderboardPage() {
                       </div>
                       {s.mode && <div className="text-xs text-[#8a6f5c] capitalize">{s.mode}</div>}
                     </div>
+                    {me && s.user_id && !mine && (
+                      <button
+                        type="button"
+                        onClick={() => addPlayer(s)}
+                        disabled={adding === s.user_id || links[s.user_id]?.status === 'friends' || links[s.user_id]?.status === 'sent'}
+                        className="shrink-0 min-h-9 inline-flex items-center gap-1 rounded-full bg-[#f6eee8] px-3 text-[11px] font-bold text-[#3d2b1f] disabled:opacity-60"
+                      >
+                        <UserPlus size={13} />
+                        {links[s.user_id]?.status === 'friends'
+                          ? 'Friends'
+                          : links[s.user_id]?.status === 'sent'
+                            ? 'Sent'
+                            : links[s.user_id]?.status === 'incoming'
+                              ? 'Accept'
+                              : adding === s.user_id
+                                ? 'Adding'
+                                : 'Add'}
+                      </button>
+                    )}
                     <div className="text-right">
                       <div className="font-extrabold text-[#3d2b1f] tabular-nums">{Number(s.score || 0).toLocaleString()}</div>
                       {s.max_tile > 0 && <div className="text-xs text-[#8a6f5c]">Tile {s.max_tile}</div>}

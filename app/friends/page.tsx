@@ -11,6 +11,8 @@ export default function FriendsPage() {
   const [profile, setProfile] = useState<any>(null);
   const [friends, setFriends] = useState<any[]>([]);
   const [pending, setPending] = useState<any[]>([]);
+  const [outgoing, setOutgoing] = useState<any[]>([]);
+  const [reachable, setReachable] = useState<{ id: string; username: string } | null>(null);
   const [searchName, setSearchName] = useState('');
   const [searchResult, setSearchResult] = useState<any>(null);
   const [searchMsg, setSearchMsg] = useState('');
@@ -74,22 +76,27 @@ export default function FriendsPage() {
 
     const accepted: any[] = [];
     const pendingList: any[] = [];
+    const sentList: any[] = [];
     rows.forEach((f: any) => {
       if (f.status === 'accepted') {
         const otherId = f.user_id === userId ? f.friend_id : f.user_id;
         accepted.push({ ...f, other: { id: otherId, username: names.get(otherId) || 'Player' } });
       } else if (f.friend_id === userId && f.status === 'pending') {
         pendingList.push({ ...f, other: { id: f.user_id, username: names.get(f.user_id) || 'Player' } });
+      } else if (f.user_id === userId && f.status === 'pending') {
+        sentList.push({ ...f, other: { id: f.friend_id, username: names.get(f.friend_id) || 'Player' } });
       }
     });
 
     setFriends(accepted);
     setPending(pendingList);
+    setOutgoing(sentList);
   };
 
   const searchUser = async () => {
     setSearchMsg('');
     setSearchResult(null);
+    setReachable(null);
     if (!searchName.trim()) return;
 
     const { data } = await supabase
@@ -115,18 +122,21 @@ export default function FriendsPage() {
     });
     if (error) {
       setSearchMsg(error.message.includes('unique') ? 'Already sent or already friends' : 'Error sending request');
-    } else {
-      await createNotification(
-        friendId,
-        'friend_request',
-        'New Friend Request',
-        `${profile?.username || 'Someone'} sent you a friend request`,
-        user.id
-      );
-      setSearchMsg('Request sent!');
-      setSearchResult(null);
-      setSearchName('');
+      return;
     }
+    await createNotification(
+      friendId,
+      'friend_request',
+      'New Friend Request',
+      `${profile?.username || 'Someone'} sent you a friend request`,
+      user.id
+    );
+    const person = { id: friendId, username: searchResult?.username || 'Player' };
+    setReachable(person);
+    setSearchMsg('Request sent. You can message them now.');
+    setSearchResult(null);
+    setSearchName('');
+    loadFriends(user.id);
   };
 
   const acceptRequest = async (friendshipId: string, fromUserId: string) => {
@@ -322,6 +332,18 @@ export default function FriendsPage() {
             </button>
           </div>
           {searchMsg && <p className="text-sm text-[#6b5344] mt-2">{searchMsg}</p>}
+          {reachable && (
+            <div className="mt-3 flex items-center justify-between gap-3 bg-[#f8f4f0] rounded-xl p-3">
+              <span className="font-medium text-[#4a3728]">{reachable.username}</span>
+              <button
+                type="button"
+                onClick={() => openChat({ other: reachable })}
+                className="min-h-11 inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-[#3d2b1f] px-3 rounded-full"
+              >
+                <MessageCircle size={15} /> Message
+              </button>
+            </div>
+          )}
           {searchResult && (
             <div className="mt-3 flex items-center justify-between bg-[#f8f4f0] rounded-xl p-3">
               <span className="font-medium text-[#4a3728]">{searchResult.username}</span>
@@ -350,6 +372,29 @@ export default function FriendsPage() {
                     className="text-sm bg-green-600 text-white px-3 py-1.5 rounded-full"
                   >
                     Accept
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {outgoing.length > 0 && (
+          <div className="mb-5">
+            <h2 className="font-semibold text-[#4a3728] mb-2">Requests you sent</h2>
+            <div className="space-y-2">
+              {outgoing.map((f) => (
+                <div key={f.id} className="flex items-center justify-between gap-3 bg-white/90 rounded-xl p-3.5 shadow-sm border border-white/50">
+                  <div className="min-w-0">
+                    <div className="font-medium text-[#4a3728] truncate">{f.other?.username || 'Player'}</div>
+                    <div className="text-xs text-[#8a6f5c]">Waiting for them to accept</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openChat(f)}
+                    className="min-h-11 shrink-0 inline-flex items-center gap-1.5 text-sm font-semibold text-[#3d2b1f] bg-[#f8f4f0] px-3 rounded-full"
+                  >
+                    <MessageCircle size={15} /> Message
                   </button>
                 </div>
               ))}
