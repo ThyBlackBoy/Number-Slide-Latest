@@ -32,9 +32,9 @@ function bestRows(rows: any[]) {
   return Array.from(map.values()).sort((a, b) => b.score - a.score);
 }
 
+const RANK_TITLES = ['Legendary', 'Elite', 'Champion'];
+
 export default function LeaderboardPage() {
-  const [frameMotion, setFrameMotion] = useState(false);
-  useEffect(() => { setFrameMotion(localStorage.getItem('animationsOn') !== 'false'); }, []);
   const [tab, setTab] = useState<Tab>('daily');
   const [scores, setScores] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,16 +49,17 @@ export default function LeaderboardPage() {
   const supabase = createClient();
 
   const loadLinks = async (userId: string) => {
-    const { data, error } = await supabase
-      .from('friendships')
-      .select('id, user_id, friend_id, status')
-      .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
-    if (error || !data) return;
+    const [ships, older] = await Promise.all([
+      supabase.from('friendships').select('id, user_id, friend_id, status').or(`user_id.eq.${userId},friend_id.eq.${userId}`),
+      supabase.from('friends').select('id, user_id, friend_id, status').or(`user_id.eq.${userId},friend_id.eq.${userId}`),
+    ]);
+    if (ships.error && older.error) return;
     const next: Record<string, { id: string; status: 'friends' | 'sent' | 'incoming' }> = {};
-    (data || []).forEach((row: any) => {
+    [...(ships.data || []), ...(older.data || [])].forEach((row: any) => {
       const otherId = row.user_id === userId ? row.friend_id : row.user_id;
-      if (!otherId || row.status === 'rejected') return;
-      const status = row.status === 'accepted'
+      const raw = String(row.status || '').toLowerCase();
+      if (!otherId || raw === 'rejected') return;
+      const status = raw === 'accepted'
         ? 'friends'
         : row.user_id === userId
           ? 'sent'
@@ -154,8 +155,8 @@ export default function LeaderboardPage() {
     setAdding(row.user_id);
     setNote('');
     if (existing?.status === 'incoming') {
-      const { error } = await supabase.from('friendships').update({ status: 'accepted' }).eq('id', existing.id);
-      if (error) setNote('Could not add them yet.');
+      const { data: accepted, error } = await supabase.from('friendships').update({ status: 'accepted' }).eq('id', existing.id).select('id');
+      if (error || !accepted?.length) setNote('Could not add them yet.');
       else {
         await supabase.from('notifications').insert({
           user_id: row.user_id,
@@ -223,13 +224,7 @@ export default function LeaderboardPage() {
             </button>
           ))}
         </div>
-        <div className="flex items-center justify-between gap-3 mb-3 text-xs text-[#6b5344]">
-          <span>Top 3 earn a live rank frame</span>
-          <button type="button" aria-pressed={frameMotion} onClick={() => setFrameMotion(v => !v)} className="min-h-11 rounded-full px-3 bg-white/70 font-semibold">
-            Frame effects: {frameMotion ? 'On' : 'Off'}
-          </button>
-        </div>
-        <div data-frame-motion={frameMotion ? 'on' : 'off'} className="bg-white/95 rounded-[1.6rem] shadow-[0_16px_40px_rgba(93,64,55,0.16)] overflow-hidden">
+        <div className="bg-white/95 rounded-[1.6rem] shadow-[0_16px_40px_rgba(93,64,55,0.16)] overflow-hidden">
           {loading && scores.length === 0 ? (
             <div className="p-8 text-center text-[#8a6f5c]">Loading...</div>
           ) : error ? (
@@ -257,7 +252,7 @@ export default function LeaderboardPage() {
                         <span className="shrink-0 rounded-full bg-[#f6eee8] px-2 py-0.5 text-[10px] font-bold text-[#7a5b48]">Lv {levelOf(s)}</span>
                         {mine && <span className="shrink-0 rounded-full bg-[#3d2b1f] px-2 py-0.5 text-[10px] font-bold text-amber-200">You</span>}
                       </div>
-                      {i < 3 && <div className="ns-rank-label">{['Legendary ? Gold', 'Elite ? Silver', 'Champion ? Bronze'][i]}</div>}
+                      {i < 3 && <div className="ns-rank-label">{RANK_TITLES[i]}</div>}
                       {identities[s.user_id] && <div className="flex items-center gap-1 text-xs font-semibold text-amber-800 mt-1"><Award size={13} className="shrink-0"/><span>{identities[s.user_id]}</span></div>}
                       {s.mode && <div className="text-xs text-[#8a6f5c] capitalize">{s.mode}</div>}
                     </div>

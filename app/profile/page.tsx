@@ -174,14 +174,15 @@ export default function ProfilePage() {
 
   const acceptRequest = async (note: any) => {
     if (!user || !note.from_user_id) return;
-    const { error } = await supabase
-      .from('friends')
+    const { data: accepted, error } = await supabase
+      .from('friendships')
       .update({ status: 'accepted' })
       .eq('user_id', note.from_user_id)
       .eq('friend_id', user.id)
-      .eq('status', 'pending');
-    if (error) {
-      setUsernameMsg('Could not accept. Run the new Supabase rules, then try again.');
+      .eq('status', 'pending')
+      .select('id');
+    if (error || !accepted?.length) {
+      setUsernameMsg('Could not accept. Try again from Friends.');
       return;
     }
     await supabase.from('notifications').insert({

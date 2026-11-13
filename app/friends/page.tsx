@@ -140,12 +140,13 @@ export default function FriendsPage() {
   };
 
   const acceptRequest = async (friendshipId: string, fromUserId: string) => {
-    const { error } = await supabase
+    const { data: accepted, error } = await supabase
       .from('friendships')
       .update({ status: 'accepted' })
-      .eq('id', friendshipId);
+      .eq('id', friendshipId)
+      .select('id');
 
-    if (error) {
+    if (error || !accepted?.length) {
       setSearchMsg('Accept failed. Check database policies and try again.');
       return;
     }

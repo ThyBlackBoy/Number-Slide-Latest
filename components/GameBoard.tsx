@@ -985,13 +985,15 @@ export default function GameBoard() {
 
   const acceptRequest = async (note: any) => {
     if (!user || !note.from_user_id) return;
-    const { error } = await supabase
+    const { data: accepted, error } = await supabase
       .from('friendships')
       .update({ status: 'accepted' })
       .eq('user_id', note.from_user_id)
-      .eq('friend_id', user.id);
+      .eq('friend_id', user.id)
+      .eq('status', 'pending')
+      .select('id');
 
-    if (error) {
+    if (error || !accepted?.length) {
       showToast('Could not accept yet');
       return;
     }
