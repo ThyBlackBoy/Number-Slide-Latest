@@ -1253,8 +1253,8 @@ export default function GameBoard() {
 
   if (screen === 'home') {
     return (
-      <div className="ns-stage min-h-screen flex flex-col items-center justify-center p-6">
-        <div className="w-full max-w-sm">
+      <div className="ns-stage ns-home min-h-screen flex flex-col items-center justify-center p-6">
+        <div className="ns-home-panel w-full max-w-sm">
           <div className="flex items-center justify-between mb-4">
             <Link href="/messages" aria-label={unreadChatCount > 0 ? `Chat, ${unreadChatCount} unread` : 'Chat'} className="relative inline-flex min-h-11 items-center gap-2 bg-white/80 text-[#3d2b1f] text-sm font-semibold px-4 py-2 rounded-full shadow">
               <MessageCircle size={16} />
@@ -1297,6 +1297,7 @@ export default function GameBoard() {
             </div>
           )}
           <div className="text-center mb-6">
+            <p className="ns-eyebrow">A little strategy. One more move.</p>
             <h1 className="text-4xl font-extrabold text-[#3d2b1f] tracking-tight">Number Slide</h1>
             <div className="mt-3 inline-flex items-center gap-2 bg-white/70 backdrop-blur px-4 py-1.5 rounded-full shadow-sm">
               <span className="text-sm font-semibold text-[#4a3728]">Level {playerLevel}</span>
@@ -1355,6 +1356,19 @@ export default function GameBoard() {
             </button>
           )}
 
+          <section className="ns-play-menu" aria-label="Play Number Slide">
+            {pausedRun && pausedRun.state.score > 0 && (
+              <button
+                onClick={continueRun}
+                className="w-full bg-white text-[#3d2b1f] p-4 rounded-2xl text-left shadow-md"
+              >
+                <div className="font-bold">Continue your game</div>
+                <div className="text-sm text-[#6b5344]">
+                  {pausedRun.state.score.toLocaleString()} · {pausedRun.mode.charAt(0).toUpperCase() + pausedRun.mode.slice(1)}
+                </div>
+              </button>
+            )}
+          <h2 className="ns-section-title">Choose your next challenge</h2>
           <div className="space-y-3">
             <button
               onClick={() => startGame('daily')}
@@ -1384,17 +1398,6 @@ export default function GameBoard() {
               <span className="text-3xl group-hover:scale-110 transition">⚔️</span>
             </button>
 
-            {pausedRun && pausedRun.state.score > 0 && (
-              <button
-                onClick={continueRun}
-                className="w-full bg-white text-[#3d2b1f] p-4 rounded-2xl text-left shadow-md"
-              >
-                <div className="font-bold">Continue your game</div>
-                <div className="text-sm text-[#6b5344]">
-                  {pausedRun.state.score.toLocaleString()} · {pausedRun.mode.charAt(0).toUpperCase() + pausedRun.mode.slice(1)}
-                </div>
-              </button>
-            )}
             <button
               onClick={() => startGame('classic')}
               className="w-full bg-white/95 p-4 rounded-2xl text-left shadow-md"
@@ -1420,7 +1423,8 @@ export default function GameBoard() {
             </div>
           </div>
 
-          <div className="mt-10 flex flex-wrap justify-center gap-6 text-sm font-medium text-[#5c4334]">
+          </section>
+          <div className="ns-home-nav mt-10 flex flex-wrap justify-center gap-6 text-sm font-medium text-[#5c4334]">
             <Link href="/levels" className="hover:underline underline-offset-4">Levels</Link>
             <Link href="/leaderboard" className="hover:underline underline-offset-4">Leaderboard</Link>
             <Link href="/friends" className="hover:underline underline-offset-4">Friends</Link>

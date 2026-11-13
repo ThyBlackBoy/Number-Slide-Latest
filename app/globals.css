@@ -58,3 +58,22 @@
     animation: none;
   }
 }
+
+/* Shared interaction and home-screen hierarchy. Tile geometry stays independent. */
+body { margin: 0; color: #3d2b1f; background: #f6eee8; font-family: Arial, Helvetica, sans-serif; -webkit-font-smoothing: antialiased; }
+button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; }
+button, a { touch-action: manipulation; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px solid #4338ca; outline-offset: 4px; }
+button:disabled { cursor: not-allowed; }
+input, textarea, select { font-size: max(16px, 1em); }
+.ns-home { background: radial-gradient(ellipse at 15% 0%, #fff9eb, transparent 60%), linear-gradient(145deg, #f6eee8, #eed7c8); padding-top: max(24px, env(safe-area-inset-top)); padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+.ns-home-panel { max-width: 520px; }
+.ns-eyebrow { margin-bottom: 12px; color: #735647; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.ns-play-menu { padding: 20px; background: rgba(255,255,255,.55); border: 1px solid rgba(255,255,255,.9); border-radius: 28px; box-shadow: 0 20px 60px #5c433412; }
+.ns-play-menu > button { margin-bottom: 18px; border: 2px solid #8a6f5c; }
+.ns-section-title { margin-bottom: 14px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #6b5344; }
+.ns-home-nav { gap: 8px; margin-top: 24px; }
+.ns-home-nav a { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 12px; border-radius: 12px; background: #ffffff80; }
+@media (hover: hover) { .ns-home-nav a:hover { background: white; } .ns-play-menu button:hover { filter: brightness(1.025); } }
+@media (max-width: 380px) { .ns-home { padding-left: 12px; padding-right: 12px; } .ns-play-menu { padding: 12px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
