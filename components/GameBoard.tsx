@@ -189,6 +189,10 @@ export default function GameBoard() {
   const [copied, setCopied] = useState(false);
   const [beatOf, setBeatOf] = useState(0);
   const [dailyPlace, setDailyPlace] = useState<string | null>(null);
+  const [inviteId, setInviteId] = useState<string | null>(null);
+  const [challengeStatus, setChallengeStatus] = useState('');
+  const [challengeEnded, setChallengeEnded] = useState(false);
+  const challengeSubmission = useRef<number | null>(null);
   const [challenge, setChallenge] = useState<{ score: number; from: string } | null>(null);
   const [keepGoing, setKeepGoing] = useState(false);
   const [playedToday, setPlayedToday] = useState(true);
@@ -347,6 +351,7 @@ export default function GameBoard() {
     };
 
     const params = new URLSearchParams(window.location.search);
+    setInviteId(params.get('invite'));
     const beat = Number(params.get('beat') || 0);
     const from = (params.get('from') || 'a player').slice(0, 20);
     if (beat > 0) setChallenge({ score: beat, from });
@@ -860,15 +865,43 @@ export default function GameBoard() {
     }
   };
 
-  const finishDuel = () => {
-    if (pvpResult) return;
+  useEffect(() => {
+    if (!inviteId || !user || !isDuel || screen !== 'playing') return;
+    let cancelled = false;
+    const sync = async () => {
+      const { data, error } = await supabase.rpc('friend_challenge_result', {
+        invite_id: inviteId, final_score: challengeSubmission.current,
+      });
+      if (cancelled) return;
+      if (error) { setChallengeStatus('Could not sync challenge. Retrying?'); return; }
+      setOpponentName(data.opponent);
+      setOpponentScore(data.theirs ?? 0);
+      if (data.mine !== null) {
+        setChallengeEnded(true);
+        setState(prev => ({ ...prev, score: data.mine }));
+        setChallengeStatus(data.result ? '' : 'Waiting for opponent to finish');
+        if (data.result) setPvpResult(data.result);
+      } else setChallengeStatus('60 seconds each. Highest score wins.');
+    };
+    void sync();
+    const poll = window.setInterval(sync, 2000);
+    return () => { cancelled = true; window.clearInterval(poll); };
+  }, [inviteId, user?.id, isDuel, screen, challengeEnded]);
+
+  const finishDuel = (finalScore = scoreRef.current) => {
     if (timerRef.current) clearInterval(timerRef.current);
-    const mine = scoreRef.current;
+    if (inviteId) {
+      if (challengeSubmission.current === null) challengeSubmission.current = finalScore;
+      setChallengeEnded(true);
+      setChallengeStatus('Saving your result?');
+      return;
+    }
+    if (pvpResult) return;
     const target = challenge?.score || 0;
-    setPvpResult(mine > target ? 'win' : mine === target ? 'draw' : 'lose');
+    setPvpResult(finalScore > target ? 'win' : finalScore === target ? 'draw' : 'lose');
     setStreak(touchStreak());
-    rememberBest(mine);
-    if (mine > 0) saveScore(mine, maxTile(state.grid));
+    rememberBest(finalScore);
+    if (finalScore > 0) saveScore(finalScore, maxTile(state.grid));
   };
 
   const closeRun = (current: GameState) => {
@@ -879,11 +912,17 @@ export default function GameBoard() {
     const tile = maxTile(current.grid);
     rememberBest(current.score);
     setStreak(touchStreak());
-    if (isDuel) finishDuel();
+    if (isDuel) finishDuel(current.score);
     else saveScore(current.score, tile);
   };
 
   const startGame = (mode: Mode) => {
+    if (mode === 'duel' && inviteId && !user) { window.location.href = '/auth/login'; return; }
+    if (mode === 'duel' && inviteId) {
+      challengeSubmission.current = null;
+      setChallengeEnded(false);
+      setChallengeStatus('Loading challenge?');
+    }
     if (mode === 'pvp') {
       if (!user) {
         alert('Please sign in to play Vs Player');
@@ -969,7 +1008,7 @@ export default function GameBoard() {
   };
 
   const handleMove = useCallback((dir: Dir) => {
-    if (screen !== 'playing' || state.gameOver || showLevelUp || pvpResult) return;
+    if (screen !== 'playing' || state.gameOver || showLevelUp || pvpResult || (isDuel && challengeEnded)) return;
     if (timed && timeLeft <= 0) return;
     const result = playMove(state, dir);
     if (!result) return;
@@ -1046,7 +1085,7 @@ export default function GameBoard() {
       levelUp(playerLevelRef.current + 1, result.state.score);
     }
     if (result.state.gameOver) closeRun(result.state);
-  }, [screen, state, tileIds, freshTileIds, user, combo, soundOn, playerLevel, targetScore, showLevelUp, isDaily, isPvp, isDuel, timed, timeLeft, pvpResult, mark, selectedMode]);
+  }, [screen, state, tileIds, freshTileIds, user, combo, soundOn, playerLevel, targetScore, showLevelUp, isDaily, isPvp, isDuel, timed, timeLeft, pvpResult, mark, selectedMode, challengeEnded]);
 
   const undo = () => {
     if (history.length === 0 || state.undosLeft <= 0 || isPvp) return;
@@ -1073,7 +1112,7 @@ export default function GameBoard() {
   };
 
   const useToolOn = (index: number) => {
-    if (!tool || state.gameOver || pvpResult) return;
+    if (!tool || state.gameOver || pvpResult || (isDuel && challengeEnded)) return;
     if (tool === 'swap' && swapFirst === null) {
       setSwapFirst(index);
       return;
@@ -1351,7 +1390,7 @@ export default function GameBoard() {
               className="w-full mb-3 bg-[#3d2b1f] text-white p-4 rounded-2xl text-left shadow-lg active:scale-[0.98] transition"
             >
               <div className="text-xs uppercase tracking-wider text-white/60">Challenge</div>
-              <div className="font-bold text-lg mt-0.5">Beat {challenge.from}</div>
+              <div className="font-bold text-lg mt-0.5">{inviteId ? "Play friend challenge / view result" : `Beat ${challenge.from}`}</div>
               <div className="text-sm text-white/80">Score {challenge.score.toLocaleString()} · 60 seconds</div>
             </button>
           )}
@@ -1781,15 +1820,16 @@ export default function GameBoard() {
           </div>
         )}
 
-        {(pvpResult || (state.gameOver && !showLevelUp)) && (
+        {(pvpResult || (isDuel && challengeEnded) || (state.gameOver && !showLevelUp)) && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-6 z-50">
             <div className="bg-white rounded-3xl p-8 text-center max-w-xs w-full shadow-2xl">
               <div className="text-2xl font-extrabold text-[#3d2b1f] mb-1">
-                {pvpResult === 'win' ? 'You win' : pvpResult === 'draw' ? 'Draw' : pvpResult === 'lose' ? 'Not this time' : 'Game over'}
+                {pvpResult === 'win' ? 'You win' : pvpResult === 'draw' ? 'Draw' : pvpResult === 'lose' ? 'Not this time' : inviteId && isDuel ? 'Challenge result' : 'Game over'}
               </div>
               <div className="text-[#6b5344]">Score {state.score.toLocaleString()}</div>
-              {isPvp && <div className="text-sm font-semibold text-purple-700 mt-1">{opponentName}: {opponentScore.toLocaleString()}</div>}
+              {(isPvp || (isDuel && inviteId)) && <div className="text-sm font-semibold text-purple-700 mt-1">{opponentName}: {opponentScore.toLocaleString()}</div>}
               <div className="text-sm text-[#8a6f5c] mt-1">Best tile {maxTile(state.grid) || '-'}</div>
+              {isDuel && inviteId && <p role="status" className="mt-3 text-sm">{challengeStatus || "Highest score wins, even below the target."}</p>}
               {dailyPlace && <div className="text-sm text-indigo-600 mt-2">{dailyPlace}</div>}
               {streak > 0 && <div className="text-sm font-semibold text-[#4a3728] mt-1">Streak {streak}</div>}
               <button onClick={shareCard} className="w-full mt-5 bg-amber-400 text-[#3d2b1f] py-3.5 rounded-2xl font-semibold">
@@ -1799,7 +1839,7 @@ export default function GameBoard() {
                 {copied ? 'Copied. Send it.' : 'Copy challenge'}
               </button>
               <button onClick={restart} className="w-full mt-2 bg-[#4a3728] text-white py-3.5 rounded-2xl font-semibold">
-                {isPvp ? 'Back to lobby' : 'Play again'}
+                {isPvp ? 'Back to lobby' : isDuel && inviteId ? 'View challenge result' : 'Play again'}
               </button>
               <button
                 onClick={() => { setScreen('home'); setSelectedMode(null); setMatch(null); setPvpResult(null); }}

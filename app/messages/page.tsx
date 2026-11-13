@@ -230,13 +230,13 @@ function MessagesPage() {
                       <Swords size={16} /> Match challenge
                     </div>
                     <div className="text-sm font-extrabold mb-3">
-                      First to {inviteTarget.toLocaleString()} points
+                      Target: {inviteTarget.toLocaleString()} points ? Highest score wins
                     </div>
                     <Link
-                      href={`/?beat=${inviteTarget}&from=${encodeURIComponent(profile?.username || 'Friend')}`}
+                      href={`/?invite=${m.id}&beat=${inviteTarget}&from=${encodeURIComponent(isMe ? open.username : profile?.username || 'Friend')}`}
                       className="block text-center bg-amber-300 text-[#3d2b1f] text-sm font-extrabold py-3 px-4 rounded-2xl"
                     >
-                      Accept and play
+                      Play / view result
                     </Link>
                   </div>
                 ) : (
