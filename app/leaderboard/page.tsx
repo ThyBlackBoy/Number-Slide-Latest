@@ -33,6 +33,8 @@ function bestRows(rows: any[]) {
 }
 
 export default function LeaderboardPage() {
+  const [frameMotion, setFrameMotion] = useState(false);
+  useEffect(() => { setFrameMotion(localStorage.getItem('animationsOn') !== 'false'); }, []);
   const [tab, setTab] = useState<Tab>('daily');
   const [scores, setScores] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -221,7 +223,13 @@ export default function LeaderboardPage() {
             </button>
           ))}
         </div>
-        <div className="bg-white/95 rounded-[1.6rem] shadow-[0_16px_40px_rgba(93,64,55,0.16)] overflow-hidden">
+        <div className="flex items-center justify-between gap-3 mb-3 text-xs text-[#6b5344]">
+          <span>Top 3 earn a live rank frame</span>
+          <button type="button" aria-pressed={frameMotion} onClick={() => setFrameMotion(v => !v)} className="min-h-11 rounded-full px-3 bg-white/70 font-semibold">
+            Frame effects: {frameMotion ? 'On' : 'Off'}
+          </button>
+        </div>
+        <div data-frame-motion={frameMotion ? 'on' : 'off'} className="bg-white/95 rounded-[1.6rem] shadow-[0_16px_40px_rgba(93,64,55,0.16)] overflow-hidden">
           {loading && scores.length === 0 ? (
             <div className="p-8 text-center text-[#8a6f5c]">Loading...</div>
           ) : error ? (
@@ -234,14 +242,22 @@ export default function LeaderboardPage() {
                 const mine = me && s.user_id === me;
                 const medal = i === 0 ? 'bg-amber-400 text-[#3d2b1f]' : i === 1 ? 'bg-stone-300 text-stone-700' : i === 2 ? 'bg-orange-400 text-white' : 'bg-[#f6eee8] text-[#7a5b48]';
                 return (
-                  <div key={`${s.user_id || i}-${s.score}`} className={`flex items-center gap-4 px-4 py-3.5 ${mine ? 'bg-amber-50' : i === 0 ? 'bg-gradient-to-r from-amber-50 to-white' : ''}`}>
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center font-extrabold text-sm shadow-sm ${medal}`}>{i + 1}</div>
+                  <div key={s.user_id || i} className={`ns-rank-row ${i < 3 ? `ns-rank-${i + 1}` : ''} flex items-center gap-3 px-3 py-4 ${mine ? 'bg-amber-50' : i === 0 ? 'bg-gradient-to-r from-amber-50 to-white' : ''}`}>
+                    {i < 3 ? (
+                      <div className="ns-rank-avatar" aria-label={`Rank ${i + 1}: ${nameOf(s)}`}>
+                        <span className="ns-rank-orbit" aria-hidden="true" />
+                        {i === 0 && <Crown size={16} className="ns-rank-crown" aria-hidden="true" />}
+                        <span className="ns-rank-initial" aria-hidden="true">{Array.from(nameOf(s))[0]?.toUpperCase()}</span>
+                        <span className="ns-rank-number" aria-hidden="true">{i + 1}</span>
+                      </div>
+                    ) : <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center font-extrabold text-sm shadow-sm ${medal}`}>{i + 1}</div>}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className="font-bold text-[#3d2b1f] truncate">{nameOf(s)}</div>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <div className="max-w-full font-bold text-[#3d2b1f] truncate">{nameOf(s)}</div>
                         <span className="shrink-0 rounded-full bg-[#f6eee8] px-2 py-0.5 text-[10px] font-bold text-[#7a5b48]">Lv {levelOf(s)}</span>
                         {mine && <span className="shrink-0 rounded-full bg-[#3d2b1f] px-2 py-0.5 text-[10px] font-bold text-amber-200">You</span>}
                       </div>
+                      {i < 3 && <div className="ns-rank-label">{['Legendary ? Gold', 'Elite ? Silver', 'Champion ? Bronze'][i]}</div>}
                       {identities[s.user_id] && <div className="flex items-center gap-1 text-xs font-semibold text-amber-800 mt-1"><Award size={13} className="shrink-0"/><span>{identities[s.user_id]}</span></div>}
                       {s.mode && <div className="text-xs text-[#8a6f5c] capitalize">{s.mode}</div>}
                     </div>
@@ -264,7 +280,7 @@ export default function LeaderboardPage() {
                                 : 'Add'}
                       </button>
                     )}
-                    <div className="text-right">
+                    <div className="shrink-0 text-right">
                       <div className="font-extrabold text-[#3d2b1f] tabular-nums">{Number(s.score || 0).toLocaleString()}</div>
                       {s.max_tile > 0 && <div className="text-xs text-[#8a6f5c]">Tile {s.max_tile}</div>}
                     </div>

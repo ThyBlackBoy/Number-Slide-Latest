@@ -77,3 +77,24 @@ input, textarea, select { font-size: max(16px, 1em); }
 @media (hover: hover) { .ns-home-nav a:hover { background: white; } .ns-play-menu button:hover { filter: brightness(1.025); } }
 @media (max-width: 380px) { .ns-home { padding-left: 12px; padding-right: 12px; } .ns-play-menu { padding: 12px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* Rank frames decorate the current top three; earned titles remain separate. */
+.ns-rank-row { position: relative; isolation: isolate; }
+.ns-rank-1 { --rank-metal: #a66b0b; --rank-light: #ffe8a0; --rank-dark: #513506; background: linear-gradient(110deg,#fff4cf,#fffdf6 65%,#fff0bf); }
+.ns-rank-2 { --rank-metal: #697c96; --rank-light: #e4edff; --rank-dark: #303e55; background: linear-gradient(110deg,#eaf0fa,#fff 70%,#eaf0fa); }
+.ns-rank-3 { --rank-metal: #a65e3a; --rank-light: #ffd6b4; --rank-dark: #633521; background: linear-gradient(110deg,#fff0e3,#fff 70%,#f9e0cd); }
+.ns-rank-1::before,.ns-rank-2::before,.ns-rank-3::before { content: ''; position:absolute; inset:5px; border:1px solid var(--rank-metal); border-radius:16px; opacity:.35; pointer-events:none; z-index:-1; }
+.ns-rank-avatar { position:relative; flex-shrink:0; width:48px; height:48px; margin:6px 1px; display:grid; place-items:center; border-radius:15px; background:var(--rank-dark); box-shadow:0 0 0 2px var(--rank-metal),0 0 0 5px var(--rank-light),0 5px 14px #3d2b1f25; }
+.ns-rank-initial { color:var(--rank-light); font-size:22px; font-weight:900; }
+.ns-rank-orbit { position:absolute; inset:-3px; border-radius:18px; overflow:hidden; pointer-events:none; }
+.ns-rank-orbit::before { content:''; position:absolute; inset:-55%; background:conic-gradient(from 0deg,transparent 0deg,transparent 245deg,var(--rank-light) 280deg,white 300deg,transparent 325deg); animation:ns-frame-orbit 7s linear infinite; }
+.ns-rank-orbit::after { content:''; position:absolute; inset:3px; border-radius:15px; background:var(--rank-dark); }
+.ns-rank-initial { position:relative; z-index:1; }
+.ns-rank-crown { position:absolute; top:-16px; left:16px; color:var(--rank-metal); fill:var(--rank-light); z-index:2; animation:ns-crown-float 4s ease-in-out infinite; }
+.ns-rank-number { position:absolute; bottom:-9px; z-index:2; background:var(--rank-light); color:var(--rank-dark); border:1px solid var(--rank-metal); border-radius:9px; min-width:23px; text-align:center; font-size:10px; font-weight:900; }
+.ns-rank-label { color:var(--rank-dark); font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; margin-top:4px; }
+@keyframes ns-frame-orbit { to { transform:rotate(360deg); } }
+@keyframes ns-crown-float { 50% { transform:translateY(-3px); } }
+[data-frame-motion="off"] .ns-rank-orbit::before,[data-frame-motion="off"] .ns-rank-crown { animation:none; }
+@media(prefers-reduced-motion:reduce) { .ns-rank-orbit::before,.ns-rank-crown { animation:none !important; } }
+@media(max-width:380px) { .ns-rank-row { column-gap:8px; padding-left:10px; padding-right:10px; flex-wrap:wrap; } .ns-rank-avatar { width:40px; height:40px; } .ns-rank-crown { left:12px; } .ns-rank-row > button { order:4; margin-left:auto; } }
