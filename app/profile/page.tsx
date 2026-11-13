@@ -4,6 +4,7 @@ import { useEffect, useState, type ChangeEvent, type CSSProperties } from 'react
 import { createClient } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import Achievements from '@/components/Achievements';
 import { getRank, STATES } from '@/lib/levels';
 import { Camera, Bell, Pencil, X, LogOut, MessageCircle } from 'lucide-react';
 
@@ -465,6 +466,8 @@ export default function ProfilePage() {
             >
               {copied ? 'Copied. Send it.' : 'Challenge a friend'}
             </button>
+
+            <Achievements userId={user.id} />
 
             <div className="mt-8">
               <h2 className="text-xs uppercase tracking-[0.16em] text-[#a08070] font-semibold mb-3">Look</h2>

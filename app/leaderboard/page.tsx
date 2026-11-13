@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase';
 import Link from 'next/link';
-import { Trophy, Calendar, Crown, UserPlus } from 'lucide-react';
+import { Trophy, Calendar, Crown, UserPlus, Award } from 'lucide-react';
 
 type Tab = 'daily' | 'alltime';
 
@@ -42,6 +42,7 @@ export default function LeaderboardPage() {
   const [myName, setMyName] = useState('Someone');
   const [links, setLinks] = useState<Record<string, { id: string; status: 'friends' | 'sent' | 'incoming' }>>({});
   const [adding, setAdding] = useState<string | null>(null);
+  const [identities, setIdentities] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
   const supabase = createClient();
 
@@ -120,6 +121,15 @@ export default function LeaderboardPage() {
           profiles: { username: person?.username || 'Player', level: person?.level || 1 },
         });
       }
+      const { data: identityRows } = await supabase.from('player_identity').select('user_id, achievement_id, achievement_catalog:achievement_id(title)');
+      if (stopped) return;
+      const titles: Record<string,string> = {};
+      for (const row of identityRows || []) {
+        const badge: any = row.achievement_catalog;
+        const title = Array.isArray(badge) ? badge[0]?.title : badge?.title;
+        if (title) titles[row.user_id] = title;
+      }
+      setIdentities(titles);
       setScores(bestRows(rows));
       setLoading(false);
     };
@@ -232,6 +242,7 @@ export default function LeaderboardPage() {
                         <span className="shrink-0 rounded-full bg-[#f6eee8] px-2 py-0.5 text-[10px] font-bold text-[#7a5b48]">Lv {levelOf(s)}</span>
                         {mine && <span className="shrink-0 rounded-full bg-[#3d2b1f] px-2 py-0.5 text-[10px] font-bold text-amber-200">You</span>}
                       </div>
+                      {identities[s.user_id] && <div className="flex items-center gap-1 text-xs font-semibold text-amber-800 mt-1"><Award size={13} className="shrink-0"/><span>{identities[s.user_id]}</span></div>}
                       {s.mode && <div className="text-xs text-[#8a6f5c] capitalize">{s.mode}</div>}
                     </div>
                     {me && s.user_id && !mine && (
