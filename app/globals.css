@@ -95,6 +95,5 @@ input, textarea, select { font-size: max(16px, 1em); }
 .ns-rank-label { color:var(--rank-dark); font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; margin-top:4px; }
 @keyframes ns-frame-orbit { to { transform:rotate(360deg); } }
 @keyframes ns-crown-float { 50% { transform:translateY(-3px); } }
-[data-frame-motion="off"] .ns-rank-orbit::before,[data-frame-motion="off"] .ns-rank-crown { animation:none; }
 @media(prefers-reduced-motion:reduce) { .ns-rank-orbit::before,.ns-rank-crown { animation:none !important; } }
 @media(max-width:380px) { .ns-rank-row { column-gap:8px; padding-left:10px; padding-right:10px; flex-wrap:wrap; } .ns-rank-avatar { width:40px; height:40px; } .ns-rank-crown { left:12px; } .ns-rank-row > button { order:4; margin-left:auto; } }
