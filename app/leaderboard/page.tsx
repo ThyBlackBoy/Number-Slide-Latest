@@ -89,7 +89,7 @@ export default function LeaderboardPage() {
       if (!response.ok) throw new Error('Leaderboard unavailable');
       const rows = await response.json();
       if (current !== generation.current) return;
-      setLabel(tab === 'daily' ? `Today ${lagosDate()} ? updates while people play ? resets at midnight, Lagos` : 'All time ? best score kept for each player');
+      setLabel(tab === 'daily' ? `Today ${lagosDate()} - updates while people play - resets at midnight, Lagos` : 'All time - best score kept for each player');
       setIdentities(Object.fromEntries(rows.filter((r: any) => r.title).map((r: any) => [r.user_id, r.title])));
       setScores(rows);
       setError('');
