@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { useVisiblePolling } from '@/lib/useVisiblePolling';
 import { createClient } from '@/lib/supabase';
 import Link from 'next/link';
 import { Trophy, Calendar, Crown, UserPlus, Award } from 'lucide-react';
@@ -22,19 +23,11 @@ function levelOf(row: any): number {
   return Math.max(1, Number(p?.level) || 1);
 }
 
-function bestRows(rows: any[]) {
-  const map = new Map<string, any>();
-  rows.forEach((row) => {
-    const key = row.user_id || nameOf(row);
-    const prev = map.get(key);
-    if (!prev || row.score > prev.score) map.set(key, row);
-  });
-  return Array.from(map.values()).sort((a, b) => b.score - a.score);
-}
-
 const RANK_TITLES = ['Legendary', 'Elite', 'Champion'];
 
 export default function LeaderboardPage() {
+  const [pageOffset, setPageOffset] = useState(0);
+  const generation = useRef(0);
   const [tab, setTab] = useState<Tab>('daily');
   const [scores, setScores] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,80 +66,41 @@ export default function LeaderboardPage() {
   };
 
   useEffect(() => {
-    let stopped = false;
-    const load = async () => {
-      const today = lagosDate();
+    generation.current += 1;
+    setLoading(true);
+    setScores([]);
+    return () => { generation.current += 1; };
+  }, [tab, pageOffset]);
+
+  useVisiblePolling(async () => {
+    const current = generation.current;
+    try {
       const { data: auth } = await supabase.auth.getUser();
+      if (current !== generation.current) return;
       const userId = auth.user?.id || null;
-      if (!stopped) setMe(userId);
+      setMe(userId);
       if (userId) {
         const { data: profile } = await supabase.from('profiles').select('username').eq('id', userId).single();
-        if (!stopped && profile?.username) setMyName(profile.username);
+        if (current !== generation.current) return;
+        if (profile?.username) setMyName(profile.username);
         await loadLinks(userId);
-      }
-      const since = new Date(`${today}T00:00:00+01:00`).toISOString();
-      const until = new Date(`${today}T23:59:59.999+01:00`).toISOString();
-      setLabel(tab === 'daily'
-        ? `Today ${today} · updates while people play · resets at midnight, Lagos`
-        : 'All time · best score kept for each player');
-      const [people, daily] = await Promise.all([
-        supabase.from('profiles').select('id, username, level, scores(score, max_tile, mode, created_at)').order('score', { referencedTable: 'scores', ascending: false }).limit(1, { referencedTable: 'scores' }),
-        supabase.from('daily_scores').select('user_id, score, max_tile, challenge_date'),
-      ]);
-      if (stopped) return;
-      if (people.error && daily.error) setError('The leaderboard could not load. Pull to refresh.');
-      else setError('');
-      const roster = new Map<string, { username: string; level: number }>();
-      const rows: any[] = [];
-      for (const person of people.data || []) {
-        roster.set(person.id, { username: person.username, level: person.level });
-        const best = Array.isArray(person.scores) ? person.scores[0] : null;
-        if (!best || !(Number(best.score) > 0)) continue;
-        const created = best.created_at ? new Date(best.created_at).toISOString() : '';
-        if (tab === 'alltime' || (created >= since && created <= until)) {
-          rows.push({
-            user_id: person.id,
-            score: best.score,
-            max_tile: best.max_tile,
-            mode: best.mode,
-            profiles: { username: person.username, level: person.level },
-          });
-        }
-      }
-      for (const row of daily.data || []) {
-        if (tab === 'daily' && row.challenge_date !== today) continue;
-        const person = roster.get(row.user_id);
-        rows.push({
-          user_id: row.user_id,
-          score: row.score,
-          max_tile: row.max_tile,
-          mode: tab === 'daily' ? 'today' : 'daily',
-          profiles: { username: person?.username || 'Player', level: person?.level || 1 },
-        });
-      }
-      const { data: identityRows } = await supabase.from('player_identity').select('user_id, achievement_id, achievement_catalog:achievement_id(title)');
-      if (stopped) return;
-      const titles: Record<string,string> = {};
-      for (const row of identityRows || []) {
-        const badge: any = row.achievement_catalog;
-        const title = Array.isArray(badge) ? badge[0]?.title : badge?.title;
-        if (title) titles[row.user_id] = title;
-      }
-      setIdentities(titles);
-      setScores(bestRows(rows));
-      setLoading(false);
-    };
-    setLoading(true);
-    load();
-    const timer = window.setInterval(load, 8000);
-    const onFocus = () => load();
-    window.addEventListener('focus', onFocus);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [tab, supabase]);
+      } else setLinks({});
+      const response = await fetch(`/api/leaderboard?board=${tab}&offset=${pageOffset}`, { signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error('Leaderboard unavailable');
+      const rows = await response.json();
+      if (current !== generation.current) return;
+      setLabel(tab === 'daily' ? `Today ${lagosDate()} ? updates while people play ? resets at midnight, Lagos` : 'All time ? best score kept for each player');
+      setIdentities(Object.fromEntries(rows.filter((r: any) => r.title).map((r: any) => [r.user_id, r.title])));
+      setScores(rows);
+      setError('');
+    } catch (error) {
+      if (current === generation.current) setError('The leaderboard could not load. Retrying shortly.');
+      throw error;
+    } finally {
+      if (current === generation.current) setLoading(false);
+    }
+  }, 10000, true, `${tab}:${pageOffset}`);
+
 
   const addPlayer = async (row: any) => {
     if (!me || !row.user_id || row.user_id === me) return;
@@ -218,7 +172,7 @@ export default function LeaderboardPage() {
         {note && <p className="text-sm font-semibold text-[#3d2b1f] mb-4">{note}</p>}
         <div className="flex bg-white/75 rounded-full p-1 mb-6 shadow">
           {tabs.map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-full text-sm font-semibold transition ${tab === t.id ? 'bg-[#4a3728] text-white shadow' : 'text-[#4a3728]'}`}>
+            <button key={t.id} onClick={() => { setPageOffset(0); setTab(t.id); }} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-full text-sm font-semibold transition ${tab === t.id ? 'bg-[#4a3728] text-white shadow' : 'text-[#4a3728]'}`}>
               <t.icon size={16} />
               {t.label}
             </button>
@@ -233,7 +187,8 @@ export default function LeaderboardPage() {
             <div className="p-8 text-center text-[#8a6f5c]">No scores yet. Sign in, play, and your score shows up here while you play.</div>
           ) : (
             <div className="divide-y divide-[#f3e6dc]">
-              {scores.map((s, i) => {
+              {scores.map((s, index) => {
+                const i = pageOffset + index;
                 const mine = me && s.user_id === me;
                 const medal = i === 0 ? 'bg-amber-400 text-[#3d2b1f]' : i === 1 ? 'bg-stone-300 text-stone-700' : i === 2 ? 'bg-orange-400 text-white' : 'bg-[#f6eee8] text-[#7a5b48]';
                 return (
@@ -284,6 +239,11 @@ export default function LeaderboardPage() {
               })}
             </div>
           )}
+        </div>
+        <div className="flex justify-between items-center mt-4 text-sm text-[#4a3728]">
+          <button disabled={pageOffset === 0 || loading} onClick={() => setPageOffset(Math.max(0, pageOffset - 100))} className="p-3 disabled:opacity-40">Previous</button>
+          <span>Page {pageOffset / 100 + 1}</span>
+          <button disabled={scores.length < 100 || loading || pageOffset >= 100000} onClick={() => setPageOffset(pageOffset + 100)} className="p-3 disabled:opacity-40">Next</button>
         </div>
       </div>
     </div>

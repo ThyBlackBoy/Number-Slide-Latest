@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, Suspense } from 'react';
+import { useVisiblePolling } from '@/lib/useVisiblePolling';
 import { createClient } from '@/lib/supabase';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -16,6 +17,7 @@ function MessagesPage() {
   const [open, setOpen] = useState<Person | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [text, setText] = useState('');
+  const [sendError, setSendError] = useState('');
   const [loading, setLoading] = useState(true);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [targetGoal, setTargetGoal] = useState(2048);
@@ -78,7 +80,8 @@ function MessagesPage() {
       .update({ read: true })
       .eq('user_id', userId)
       .eq('from_user_id', other.id)
-      .eq('type', 'message');
+      .eq('type', 'message')
+      .eq('read', false);
 
     const { data } = await supabase
       .from('messages')
@@ -86,10 +89,10 @@ function MessagesPage() {
       .or(
         `and(sender_id.eq.${userId},receiver_id.eq.${other.id}),and(sender_id.eq.${other.id},receiver_id.eq.${userId})`
       )
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(80);
 
-    setMessages(data || []);
+    if (data) setMessages([...data].reverse());
     setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 40);
   };
 
@@ -113,15 +116,14 @@ function MessagesPage() {
     boot();
   }, [supabase, router]);
 
-  useEffect(() => {
-    if (!user || !open) return;
-    const timer = setInterval(() => loadThread(user.id, open), 4000);
-    return () => clearInterval(timer);
-  }, [user, open]);
+  useVisiblePolling(async () => {
+    if (user && open) await loadThread(user.id, open);
+  }, 4000, !!user && !!open);
 
   const send = async (contentToSend?: string) => {
     const content = (contentToSend || text).trim();
     if (!user || !open || !content) return;
+    setSendError('');
     if (!contentToSend) setText('');
 
     const { data, error } = await supabase
@@ -130,7 +132,12 @@ function MessagesPage() {
       .select()
       .single();
 
-    if (!error && data) {
+    if (error) {
+      if (!contentToSend) setText(current => current || content);
+      setSendError('Message did not send. Please try again shortly.');
+      return;
+    }
+    if (data) {
       setMessages((prev) => [...prev, data]);
       await supabase.from('notifications').insert({
         user_id: open.id,
@@ -273,6 +280,7 @@ function MessagesPage() {
               </button>
             ))}
           </div>
+          {sendError && <p role="status" className="px-4 py-2 text-sm text-red-800">{sendError}</p>}
           <form
             className="px-3 pb-3 flex gap-2"
             onSubmit={(e) => {
@@ -283,6 +291,7 @@ function MessagesPage() {
             <label className="sr-only" htmlFor="chat-message">Message</label>
             <input
               id="chat-message"
+              maxLength={4000}
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder="Type a message"

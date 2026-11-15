@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties } from 'react';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase';
 import {
   GameState,
@@ -19,6 +20,7 @@ import {
   boardSizeFor,
 } from '@/lib/gameLogic';
 import { getTargetScore, getLevelReward, getLevelTitle } from '@/lib/levels';
+import { useVisiblePolling } from '@/lib/useVisiblePolling';
 import { publishStanding, type Standing } from '@/lib/standings';
 import { Undo2, RotateCcw, Volume2, VolumeX, Calendar, Swords, Users, MessageCircle } from 'lucide-react';
 import Link from 'next/link';
@@ -207,6 +209,9 @@ export default function GameBoard() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scoreRef = useRef(0);
+  const pvpChannel = useRef<RealtimeChannel | null>(null);
+  const lastBroadcastScore = useRef<number | null>(null);
+  const matchRoomChannel = useRef<RealtimeChannel | null>(null);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const tileIdCounterRef = useRef(0);
   const savedRun = useRef(false);
@@ -257,6 +262,8 @@ export default function GameBoard() {
       config: { broadcast: { self: false } },
     });
 
+    pvpChannel.current = channel;
+    lastBroadcastScore.current = null;
     channel
       .on('broadcast', { event: 'score' }, ({ payload }) => {
         if (typeof payload.score === 'number') setOpponentScore(payload.score);
@@ -265,20 +272,30 @@ export default function GameBoard() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      pvpChannel.current = null;
+      void supabase.removeChannel(channel);
     };
   }, [isPvp, match?.id, screen, supabase]);
 
-  useEffect(() => {
-    if (!isPvp || !match?.id || screen !== 'playing') return;
+  useVisiblePolling(async () => {
+    const channel = pvpChannel.current;
+    if (channel?.state !== 'joined' || lastBroadcastScore.current === scoreRef.current) return;
+    const score = scoreRef.current;
+    const result = await channel.send({ type: 'broadcast', event: 'score', payload: { score, username } });
+    if (result !== 'ok') throw new Error('Score broadcast failed');
+    lastBroadcastScore.current = score;
+  }, 500, isPvp && !!match?.id && screen === 'playing', match?.id || '');
 
-    const channel = supabase.channel(`pvp_match_${match.id}`);
-    channel.send({
-      type: 'broadcast',
-      event: 'score',
-      payload: { score: state.score, username },
-    });
-  }, [state.score, isPvp, match?.id, screen, username, supabase]);
+  useEffect(() => {
+    if (screen === 'pvp-lobby') return;
+    if (matchRoomChannel.current) {
+      void supabase.removeChannel(matchRoomChannel.current);
+      matchRoomChannel.current = null;
+    }
+  }, [screen, supabase]);
+  useEffect(() => () => {
+    if (matchRoomChannel.current) void supabase.removeChannel(matchRoomChannel.current);
+  }, [supabase]);
 
   useEffect(() => {
     if (screen !== 'playing' || localStorage.getItem('musicOn') !== 'true') return;
@@ -437,34 +454,18 @@ export default function GameBoard() {
     return () => subscription.unsubscribe();
   }, [supabase]);
 
-  // Pull logic: Separate Alerts from Unread Messages
-  useEffect(() => {
+  useVisiblePolling(async () => {
     if (!user) return;
-    const pull = async () => {
-      const { data: alerts } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('read', false)
-        .neq('type', 'message')
-        .order('created_at', { ascending: false })
-        .limit(20);
-
-      const { count: chatCount } = await supabase
-        .from('notifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .eq('type', 'message')
-        .eq('read', false);
-
-      setNotifs(alerts || []);
-      setUnreadChatCount(chatCount || 0);
-    };
-
-    pull();
-    const timer = window.setInterval(pull, 4000);
-    return () => window.clearInterval(timer);
-  }, [user, supabase]);
+    const [alerts, chats] = await Promise.all([
+      supabase.from('notifications').select('*').eq('user_id', user.id).eq('read', false)
+        .neq('type', 'message').order('created_at', { ascending: false }).limit(20),
+      supabase.from('notifications').select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id).eq('type', 'message').eq('read', false),
+    ]);
+    if (alerts.error || chats.error) throw new Error('Could not refresh notifications');
+    setNotifs(alerts.data || []);
+    setUnreadChatCount(chats.count || 0);
+  }, 10000, !!user, user?.id || '');
 
   // Clear alerts badge upon opening popover
   const toggleAlerts = async () => {
@@ -565,7 +566,7 @@ export default function GameBoard() {
   const saveScore = async (score: number, tile: number) => {
     if (score <= 0 || isPvp) return;
     if (!user) return;
-    if (score < publishedScore.current) return;
+    if (score <= publishedScore.current) return;
     pendingStanding.current = { score, tile };
     if (standingLock.current) return;
     standingLock.current = true;
@@ -579,45 +580,18 @@ export default function GameBoard() {
           tile: job.tile,
           mode: selectedMode || 'normal',
         });
-        publishedScore.current = Math.max(publishedScore.current, job.score);
-        setStanding(result.standing);
+        if (result.saved) publishedScore.current = Math.max(publishedScore.current, job.score);
+        if (result.saved) {
+          setStanding(result.standing);
+          toldSaveFail.current = false;
+        }
         if (!result.saved && !toldSaveFail.current) {
           toldSaveFail.current = true;
           showToast('Score did not reach the leaderboard');
         }
-        if (result.passedToday) {
-          await supabase.from('notifications').insert({
-            user_id: result.passedToday.userId,
-            type: 'throne',
-            title: 'Somebody pass you',
-            body: `${username} just scored ${job.score.toLocaleString()} and took today's top from ${result.passedToday.username || 'you'}. Come take it back.`,
-            from_user_id: user.id,
-          });
-        }
-        if (result.passedAllTime && result.passedAllTime.userId !== result.passedToday?.userId) {
-          await supabase.from('notifications').insert({
-            user_id: result.passedAllTime.userId,
-            type: 'throne',
-            title: 'Somebody pass you',
-            body: `${username} just scored ${job.score.toLocaleString()} and took the all-time top from ${result.passedAllTime.username || 'you'}. Come take it back.`,
-            from_user_id: user.id,
-          });
-        }
-        if (isDaily || isDuel) {
-          const { count: behind } = await supabase
-            .from('daily_scores')
-            .select('*', { count: 'exact', head: true })
-            .eq('challenge_date', lagosDate())
-            .lt('score', job.score);
-          const { count: total } = await supabase
-            .from('daily_scores')
-            .select('*', { count: 'exact', head: true })
-            .eq('challenge_date', lagosDate());
-          if (total && total > 0) {
-            const percent = Math.round(((behind || 0) / total) * 100);
-            setBeatOf(percent);
-            setDailyPlace(`Beat ${percent}% today`);
-          }
+        if ((isDaily || isDuel) && result.saved && result.percent !== null) {
+          setBeatOf(result.percent);
+          setDailyPlace(`Beat ${result.percent}% today`);
         }
       }
     } finally {
@@ -627,13 +601,9 @@ export default function GameBoard() {
     }
   };
 
-  useEffect(() => {
-    if (screen !== 'playing' || isPvp || state.score <= 0) return;
-    const timer = window.setTimeout(() => {
-      saveScore(state.score, maxTile(state.grid));
-    }, 650);
-    return () => window.clearTimeout(timer);
-  }, [state.score, state.grid, screen, isPvp, user, selectedMode]);
+  useVisiblePolling(async () => {
+    if (state.score > 0) await saveScore(state.score, maxTile(state.grid));
+  }, 5000, screen === 'playing' && !isPvp && !!user, `${user?.id || ''}:${selectedMode || ''}`);
 
   const levelUp = async (newLevel: number, score: number) => {
     if (!levelReady.current || newLevel <= playerLevelRef.current) {
@@ -770,7 +740,8 @@ export default function GameBoard() {
       setMatch(data);
       setLoadingLobby(false);
 
-      // Realtime listener for opponent joining room
+      // Reuse one waiting-room channel and release it on navigation/unmount.
+      if (matchRoomChannel.current) void supabase.removeChannel(matchRoomChannel.current);
       const channel = supabase
         .channel(`match_room_${data.id}`)
         .on(
@@ -791,6 +762,7 @@ export default function GameBoard() {
           }
         )
         .subscribe();
+      matchRoomChannel.current = channel;
     }
   };
 
@@ -865,28 +837,22 @@ export default function GameBoard() {
     }
   };
 
-  useEffect(() => {
-    if (!inviteId || !user || !isDuel || screen !== 'playing') return;
-    let cancelled = false;
-    const sync = async () => {
-      const { data, error } = await supabase.rpc('friend_challenge_result', {
-        invite_id: inviteId, final_score: challengeSubmission.current,
-      });
-      if (cancelled) return;
-      if (error) { setChallengeStatus('Could not sync challenge. Retrying?'); return; }
-      setOpponentName(data.opponent);
-      setOpponentScore(data.theirs ?? 0);
-      if (data.mine !== null) {
-        setChallengeEnded(true);
-        setState(prev => ({ ...prev, score: data.mine }));
-        setChallengeStatus(data.result ? '' : 'Waiting for opponent to finish');
-        if (data.result) setPvpResult(data.result);
-      } else setChallengeStatus('60 seconds each. Highest score wins.');
-    };
-    void sync();
-    const poll = window.setInterval(sync, 2000);
-    return () => { cancelled = true; window.clearInterval(poll); };
-  }, [inviteId, user?.id, isDuel, screen, challengeEnded]);
+  useVisiblePolling(async () => {
+    if (!inviteId || !user) return;
+    const { data, error } = await supabase.rpc('friend_challenge_result', {
+      invite_id: inviteId, final_score: challengeSubmission.current,
+    });
+    if (error) { setChallengeStatus('Could not sync challenge. Retrying...'); throw error; }
+    setOpponentName(data.opponent);
+    setOpponentScore(data.theirs ?? 0);
+    if (data.mine !== null) {
+      setChallengeEnded(true);
+      setState(prev => ({ ...prev, score: data.mine }));
+      setChallengeStatus(data.result ? '' : 'Waiting for opponent to finish');
+      if (data.result) setPvpResult(data.result);
+    } else setChallengeStatus('60 seconds each. Highest score wins.');
+  }, 2000, !!inviteId && !!user && isDuel && screen === 'playing' && !pvpResult,
+    `${inviteId || ''}:${challengeEnded}`);
 
   const finishDuel = (finalScore = scoreRef.current) => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -1286,11 +1252,7 @@ export default function GameBoard() {
     else handleMove(dy > 0 ? 'down' : 'up');
   };
 
-  useEffect(() => {
-    if (screen !== 'pvp-lobby') return;
-    const timer = window.setInterval(loadOpenMatches, 3000);
-    return () => window.clearInterval(timer);
-  }, [screen, user]);
+  useVisiblePolling(loadOpenMatches, 5000, screen === 'pvp-lobby' && !!user, user?.id || '');
 
   if (screen === 'home') {
     return (

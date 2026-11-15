@@ -169,9 +169,9 @@ export default function FriendsPage() {
       .or(
         `and(sender_id.eq.${user.id},receiver_id.eq.${friend.other.id}),and(sender_id.eq.${friend.other.id},receiver_id.eq.${user.id})`
       )
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(50);
-    setMessages(data || []);
+    if (data) setMessages([...data].reverse());
     setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
   };
 
@@ -273,6 +273,7 @@ export default function FriendsPage() {
           <label className="sr-only" htmlFor="friend-message">Message</label>
           <input
             id="friend-message"
+            maxLength={4000}
             value={newMsg}
             onChange={(e) => setNewMsg(e.target.value)}
             placeholder="Type a message"

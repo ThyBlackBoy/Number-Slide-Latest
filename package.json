@@ -6,23 +6,27 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test regression.test.cjs polling.test.cjs standings.test.cjs leaderboard-api.test.cjs"
   },
   "dependencies": {
-    "next": "^14.2.5",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@supabase/ssr": "^0.4.0",
-    "@supabase/supabase-js": "^2.44.4",
-    "lucide-react": "^0.408.0"
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.118.0",
+    "lucide-react": "1.73.0",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
-    "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0",
-    "typescript": "^5.5.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.5.33",
     "tailwindcss": "^3.4.6",
-    "postcss": "^8.4.39",
-    "autoprefixer": "^10.4.19"
+    "typescript": "^5.5.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }
