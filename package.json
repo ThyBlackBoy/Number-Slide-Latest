@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --test regression.test.cjs polling.test.cjs standings.test.cjs leaderboard-api.test.cjs"
+    "test": "node --test regression.test.cjs polling.test.cjs standings.test.cjs leaderboard-api.test.cjs account-security.test.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",

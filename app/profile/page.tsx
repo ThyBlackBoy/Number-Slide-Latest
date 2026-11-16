@@ -468,6 +468,7 @@ export default function ProfilePage() {
               {copied ? 'Copied. Send it.' : 'Challenge a friend'}
             </button>
 
+        <Link href="/auth/security" className="block bg-white rounded-2xl p-4 my-4 font-semibold text-[#3d2b1f]">Account security and two-factor authentication</Link>
             <Achievements userId={user.id} />
 
             <div className="mt-8">

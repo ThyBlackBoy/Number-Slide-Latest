@@ -1,0 +1,10 @@
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const ts=require('typescript');
+const vm=require('node:vm');
+const result={};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('lib/accountSecurity.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,{exports:result});
+test('new passwords require twelve characters without restricting existing login',()=>{assert.notEqual(result.passwordError('short'), '');assert.equal(result.passwordError('a long unique passphrase'), '');});
+test('new usernames cannot use markup, whitespace or overlong values',()=>{for(const n of ['ab','<script>','bad name','a'.repeat(25)])assert.equal(result.validUsername(n),false);assert.equal(result.validUsername('Ghost99900'),true);});
+test('auth callbacks only redirect to explicitly allowed local destinations',()=>{for(const p of ['https://evil.test','//evil.test','/\\evil.test','/auth/reset-password?next=evil',null])assert.equal(result.safeAuthDestination(p),'/');assert.equal(result.safeAuthDestination('/auth/reset-password'),'/auth/reset-password');});
